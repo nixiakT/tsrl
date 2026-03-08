@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
             "regime_classification",
             "future_return_regression",
             "future_return_vector_regression",
+            "masked_patch_reconstruction",
             "joint_regime_return",
         ],
         default="regime_classification",

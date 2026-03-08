@@ -248,6 +248,34 @@ class PatchTSTPretrainingTest(unittest.TestCase):
             self.assertEqual(payload["regression_target_dim"], 3)
             self.assertEqual(payload["label_count"], 3)
 
+    def test_pretrain_patchtst_supports_masked_patch_reconstruction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_path = self._write_patchtst_portfolio_config(tmp_path)
+
+            artifacts, summary = pretrain_patchtst_backbone(
+                config_path=config_path,
+                output_dir=tmp_path / "pretrain_masked",
+                epochs=2,
+                batch_size=16,
+                task_type="masked_patch_reconstruction",
+            )
+
+            self.assertTrue(artifacts.checkpoint_path.exists())
+            self.assertEqual(summary["task"], "masked_patch_reconstruction")
+            self.assertEqual(summary["task_heads"], ["masked_patch_reconstruction"])
+            self.assertEqual(summary["selection_metric"], "val_reconstruction_loss")
+            self.assertGreaterEqual(summary["best_val_reconstruction_loss"], 0.0)
+            self.assertEqual(summary["regression_target_dim"], 0)
+            self.assertIn("val_reconstruction_loss", summary["best_metrics"])
+            self.assertIn("val_mask_ratio", summary["best_metrics"])
+
+            payload = torch.load(artifacts.checkpoint_path, map_location="cpu")
+            self.assertEqual(payload["task"], "masked_patch_reconstruction")
+            self.assertEqual(payload["task_heads"], ["masked_patch_reconstruction"])
+            self.assertEqual(payload["regression_target_dim"], 0)
+            self.assertEqual(payload["label_count"], 0)
+
     def test_patchtst_agent_loads_and_freezes_pretrained_backbone(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

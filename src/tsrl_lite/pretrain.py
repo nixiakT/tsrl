@@ -45,7 +45,8 @@ CLASSIFICATION_TASKS = {"regime_classification", "joint_regime_return"}
 SCALAR_REGRESSION_TASKS = {"future_return_regression", "joint_regime_return"}
 VECTOR_REGRESSION_TASKS = {"future_return_vector_regression"}
 REGRESSION_TASKS = SCALAR_REGRESSION_TASKS | VECTOR_REGRESSION_TASKS
-SUPPORTED_PRETRAINING_TASKS = CLASSIFICATION_TASKS | REGRESSION_TASKS
+SELF_SUPERVISED_TASKS = {"masked_patch_reconstruction"}
+SUPPORTED_PRETRAINING_TASKS = CLASSIFICATION_TASKS | REGRESSION_TASKS | SELF_SUPERVISED_TASKS
 
 
 def _task_uses_classification(task_type: str) -> bool:
@@ -64,6 +65,10 @@ def _task_uses_vector_regression(task_type: str) -> bool:
     return task_type in VECTOR_REGRESSION_TASKS
 
 
+def _task_uses_self_supervision(task_type: str) -> bool:
+    return task_type in SELF_SUPERVISED_TASKS
+
+
 def _task_heads(task_type: str) -> list[str]:
     heads: list[str] = []
     if _task_uses_classification(task_type):
@@ -72,6 +77,8 @@ def _task_heads(task_type: str) -> list[str]:
         heads.append("future_return_regression")
     if _task_uses_vector_regression(task_type):
         heads.append("future_return_vector_regression")
+    if _task_uses_self_supervision(task_type):
+        heads.append("masked_patch_reconstruction")
     return heads
 
 
@@ -206,7 +213,8 @@ def pretrain_patchtst_backbone(
     if task_type not in SUPPORTED_PRETRAINING_TASKS:
         raise ValueError(
             "task_type must be 'regime_classification', 'future_return_regression', "
-            "'future_return_vector_regression', or 'joint_regime_return'"
+            "'future_return_vector_regression', 'masked_patch_reconstruction', "
+            "or 'joint_regime_return'"
         )
 
     config = load_experiment_config(config_path)
@@ -341,6 +349,10 @@ def pretrain_patchtst_backbone(
         best_selection_value = float("inf")
         best_selection_mode = "min"
         selection_metric_name = "val_mae"
+    elif task_type == "masked_patch_reconstruction":
+        best_selection_value = float("inf")
+        best_selection_mode = "min"
+        selection_metric_name = "val_reconstruction_loss"
     else:
         best_selection_value = float("inf")
         best_selection_mode = "min"
@@ -361,6 +373,7 @@ def pretrain_patchtst_backbone(
         train_accuracy_total = 0.0
         train_mae_total = 0.0
         train_rmse_total = 0.0
+        train_reconstruction_loss_total = 0.0
         train_aux_loss_total = 0.0
         train_aux_ratio_total = 0.0
         step_count = 0
@@ -375,6 +388,8 @@ def pretrain_patchtst_backbone(
             accuracy_value = 0.0
             mae_value = 0.0
             rmse_value = 0.0
+            reconstruction_loss_value = 0.0
+            realized_mask_ratio = 0.0
             if classification_head is not None and train_classification_tensor is not None:
                 classification_labels = train_classification_tensor[batch_index]
                 classification_logits = classification_head(features)
@@ -393,13 +408,20 @@ def pretrain_patchtst_backbone(
                 mae_value = _regression_mae(regression_predictions, regression_labels)
                 rmse_value = _regression_rmse(regression_predictions, regression_labels)
             aux_loss_value = torch.zeros((), dtype=batch_observations.dtype, device=device)
-            realized_mask_ratio = 0.0
-            if aux_loss_coef > 0.0:
+            if _task_uses_self_supervision(task_type):
+                total_loss, realized_mask_ratio = network.masked_patch_reconstruction_loss(
+                    batch_observations,
+                    mask_ratio=aux_mask_ratio,
+                )
+                reconstruction_loss_value = float(total_loss.item())
+            else:
+                total_loss = supervised_loss
+            if not _task_uses_self_supervision(task_type) and aux_loss_coef > 0.0:
                 aux_loss_value, realized_mask_ratio = network.masked_patch_reconstruction_loss(
                     batch_observations,
                     mask_ratio=aux_mask_ratio,
                 )
-            total_loss = supervised_loss + (aux_loss_coef * aux_loss_value)
+                total_loss = supervised_loss + (aux_loss_coef * aux_loss_value)
             optimizer.zero_grad()
             total_loss.backward()
             parameters_for_clip = list(network.backbone_parameters())
@@ -410,12 +432,13 @@ def pretrain_patchtst_backbone(
             nn.utils.clip_grad_norm_(parameters_for_clip, 1.0)
             optimizer.step()
 
-            train_loss_total += float(supervised_loss.item())
+            train_loss_total += float(total_loss.item())
             train_classification_loss_total += classification_loss_value
             train_regression_loss_total += regression_loss_value
             train_accuracy_total += accuracy_value
             train_mae_total += mae_value
             train_rmse_total += rmse_value
+            train_reconstruction_loss_total += reconstruction_loss_value
             train_aux_loss_total += float(aux_loss_value.item())
             train_aux_ratio_total += float(realized_mask_ratio)
             step_count += 1
@@ -433,6 +456,19 @@ def pretrain_patchtst_backbone(
                 "train_aux_loss": train_aux_loss_total / max(step_count, 1),
                 "train_aux_mask_ratio": train_aux_ratio_total / max(step_count, 1),
             }
+            if _task_uses_self_supervision(task_type):
+                torch.manual_seed(config.seed + epoch)
+                val_reconstruction_loss, val_mask_ratio = network.masked_patch_reconstruction_loss(
+                    val_observations_tensor,
+                    mask_ratio=aux_mask_ratio,
+                )
+                record.update(
+                    {
+                        "train_reconstruction_loss": train_reconstruction_loss_total / max(step_count, 1),
+                        "val_reconstruction_loss": float(val_reconstruction_loss.item()),
+                        "val_mask_ratio": float(val_mask_ratio),
+                    }
+                )
             if classification_head is not None and val_classification_tensor is not None:
                 val_classification_logits = classification_head(val_features)
                 val_classification_loss = float(
@@ -474,6 +510,9 @@ def pretrain_patchtst_backbone(
             elif task_type in {"future_return_regression", "future_return_vector_regression"}:
                 record["val_loss"] = float(record["val_regression_loss"])
                 val_selection_value = float(record["val_mae"])
+            elif task_type == "masked_patch_reconstruction":
+                record["val_loss"] = float(record["val_reconstruction_loss"])
+                val_selection_value = float(record["val_reconstruction_loss"])
             else:
                 joint_loss = (
                     classification_loss_coef * float(record["val_classification_loss"])
@@ -513,7 +552,11 @@ def pretrain_patchtst_backbone(
                     },
                     "task": task_type,
                     "task_heads": _task_heads(task_type),
-                    "label_count": 3 if _task_uses_classification(task_type) else max(regression_target_dim, 1),
+                    "label_count": (
+                        3
+                        if _task_uses_classification(task_type)
+                        else max(regression_target_dim, 1) if _task_uses_regression(task_type) else 0
+                    ),
                     "regression_target_dim": int(regression_target_dim),
                     "best_selection_metric": selection_metric_name,
                     "best_selection_value": best_selection_value,
@@ -548,6 +591,8 @@ def pretrain_patchtst_backbone(
         summary["best_val_accuracy"] = float(best_selection_value)
     elif task_type in {"future_return_regression", "future_return_vector_regression"}:
         summary["best_val_mae"] = float(best_selection_value)
+    elif task_type == "masked_patch_reconstruction":
+        summary["best_val_reconstruction_loss"] = float(best_selection_value)
     else:
         summary["best_val_joint_loss"] = float(best_selection_value)
     dump_json(summary_path, summary)
