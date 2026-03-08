@@ -1,0 +1,73 @@
+{
+  "experiment_name": "synthetic_regime_patchtst_finetune",
+  "seed": 73,
+  "data": {
+    "source": "synthetic",
+    "window_size": 32,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "price_column": "price",
+    "synthetic": {
+      "steps": 2600,
+      "drift": 0.0016,
+      "volatility": 0.006,
+      "seasonality": 0.003
+    }
+  },
+  "env": {
+    "name": "regime-v0",
+    "reward_scale": 1.0,
+    "episode_horizon": 192,
+    "random_reset": true,
+    "params": {
+      "forecast_horizon": 8,
+      "regime_threshold": 0.002
+    }
+  },
+  "encoder": {
+    "name": "sequence-window-v0",
+    "params": {}
+  },
+  "agent": {
+    "name": "torch-patchtst-ppo",
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_lr": 0.0008,
+    "value_lr": 0.0008,
+    "gradient_clip": 1.0,
+    "params": {
+      "hidden_size": 64,
+      "patch_len": 8,
+      "stride": 4,
+      "num_layers": 2,
+      "num_heads": 4,
+      "dropout": 0.1,
+      "use_cls_token": true,
+      "clip_epsilon": 0.2,
+      "update_epochs": 4,
+      "entropy_coef": 0.01,
+      "value_coef": 0.5,
+      "mini_batch_size": 64,
+      "target_kl": 0.05,
+      "value_clip_epsilon": 0.2,
+      "aux_loss_coef": 0.1,
+      "aux_mask_ratio": 0.4,
+      "aux_epochs": 1,
+      "pretrained_backbone_path": "runs/synthetic_regime_patchtst_pretrain/backbone_checkpoint.pt",
+      "freeze_backbone": false,
+      "device": "auto"
+    }
+  },
+  "trainer": {
+    "episodes": 40,
+    "val_episodes": 1,
+    "eval_episodes": 1,
+    "log_interval": 10,
+    "eval_interval": 10,
+    "selection_metric": "mean_terminal_score",
+    "selection_mode": "max",
+    "save_best": true,
+    "early_stop_patience": null,
+    "checkpoint_dir": "runs/synthetic_regime_patchtst_finetune"
+  }
+}

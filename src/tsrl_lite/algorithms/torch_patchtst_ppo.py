@@ -52,6 +52,8 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             aux_loss_coef: float = 0.0,
             aux_mask_ratio: float = 0.4,
             aux_epochs: int = 1,
+            pretrained_backbone_path: str | None = None,
+            freeze_backbone: bool = False,
             device: str = "auto",
             seed: int = 7,
         ) -> None:
@@ -71,6 +73,8 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             self.aux_loss_coef = max(0.0, float(aux_loss_coef))
             self.aux_mask_ratio = float(aux_mask_ratio)
             self.aux_epochs = max(1, int(aux_epochs))
+            self.pretrained_backbone_path = pretrained_backbone_path
+            self.freeze_backbone = bool(freeze_backbone)
             resolved_device = device
             if device == "auto":
                 resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -95,22 +99,24 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 dropout=dropout,
                 use_cls_token=use_cls_token,
             ).to(self.device)
-            self.optimizer = optim.Adam(
-                [
-                    {"params": self.network.patch_projection.parameters(), "lr": policy_lr},
-                    {"params": self.network.encoder.parameters(), "lr": policy_lr},
-                    {"params": self.network.reconstruction_head.parameters(), "lr": policy_lr},
-                    {"params": self.network.policy_head.parameters(), "lr": policy_lr},
-                    {"params": [self.network.position_embedding, self.network.mask_token], "lr": policy_lr},
-                    {"params": self.network.value_head.parameters(), "lr": value_lr},
-                    {"params": self.network.norm.parameters(), "lr": value_lr},
-                ]
-                + (
-                    [{"params": [self.network.cls_token], "lr": policy_lr}]
-                    if self.network.cls_token is not None
-                    else []
-                )
-            )
+            if self.pretrained_backbone_path:
+                payload = torch.load(self.pretrained_backbone_path, map_location=self.device)
+                backbone_state_dict = payload.get("backbone_state_dict", payload.get("state_dict", payload))
+                if not isinstance(backbone_state_dict, dict):
+                    raise ValueError("pretrained_backbone_path must point to a valid PatchTST backbone checkpoint")
+                self.network.load_backbone_state_dict(backbone_state_dict)
+            backbone_parameters = list(self.network.backbone_parameters())
+            if self.freeze_backbone:
+                for parameter in backbone_parameters:
+                    parameter.requires_grad_(False)
+            parameter_groups = []
+            trainable_backbone_parameters = [parameter for parameter in backbone_parameters if parameter.requires_grad]
+            self.has_trainable_backbone = bool(trainable_backbone_parameters)
+            if trainable_backbone_parameters:
+                parameter_groups.append({"params": trainable_backbone_parameters, "lr": policy_lr})
+            parameter_groups.append({"params": self.network.policy_head.parameters(), "lr": policy_lr})
+            parameter_groups.append({"params": self.network.value_head.parameters(), "lr": value_lr})
+            self.optimizer = optim.Adam(parameter_groups)
 
         def act(
             self,
@@ -152,7 +158,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 value_clip_epsilon=self.value_clip_epsilon,
                 target_kl=self.target_kl,
             )
-            if self.aux_loss_coef <= 0.0:
+            if self.aux_loss_coef <= 0.0 or not self.has_trainable_backbone:
                 return metrics
 
             observations = prepared_batch["observations"]

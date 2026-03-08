@@ -15,6 +15,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency path
 if torch is not None:
 
     class TorchPatchTSTActorCriticNetwork(nn.Module):
+        BACKBONE_PREFIXES = (
+            "patch_projection.",
+            "reconstruction_head.",
+            "position_embedding",
+            "cls_token",
+            "mask_token",
+            "encoder.",
+            "norm.",
+        )
+
         def __init__(
             self,
             input_dim: int,
@@ -124,6 +134,39 @@ if torch is not None:
             logits = self.policy_head(features)
             value = self.value_head(features).squeeze(-1)
             return logits, value
+
+        def backbone_state_dict(self) -> dict[str, torch.Tensor]:
+            state = self.state_dict()
+            return {
+                key: value
+                for key, value in state.items()
+                if key.startswith(self.BACKBONE_PREFIXES)
+            }
+
+        def load_backbone_state_dict(self, backbone_state_dict: dict[str, torch.Tensor]) -> None:
+            current_state = self.state_dict()
+            matched_state = {
+                key: value
+                for key, value in backbone_state_dict.items()
+                if key in current_state and tuple(current_state[key].shape) == tuple(value.shape)
+            }
+            if not matched_state:
+                raise ValueError("no compatible PatchTST backbone parameters found in checkpoint")
+            current_state.update(matched_state)
+            self.load_state_dict(current_state)
+
+        def backbone_parameters(self):
+            for module in (
+                self.patch_projection,
+                self.encoder,
+                self.norm,
+                self.reconstruction_head,
+            ):
+                yield from module.parameters()
+            yield self.position_embedding
+            yield self.mask_token
+            if self.cls_token is not None:
+                yield self.cls_token
 
         def save(self, path: str | Path, optimizer=None) -> None:
             target = Path(path)

@@ -14,6 +14,7 @@ from tsrl_lite.evaluate import evaluate_agent
 from tsrl_lite.export import export_rollouts
 from tsrl_lite.matrix import run_benchmark_matrix_spec
 from tsrl_lite.optimizer import run_overnight_optimizer, run_overnight_watchdog
+from tsrl_lite.pretrain import pretrain_patchtst_backbone
 from tsrl_lite.registry import list_agents, list_encoders, list_envs
 from tsrl_lite.study import run_study, run_study_spec
 from tsrl_lite.trainer import load_trained_agent, train_experiment
@@ -26,6 +27,16 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser = subparsers.add_parser("train", help="run training")
     train_parser.add_argument("--config", required=True, help="path to experiment json config")
     train_parser.add_argument("--output", help="optional output directory override")
+
+    pretrain_parser = subparsers.add_parser(
+        "pretrain-patchtst",
+        help="run supervised PatchTST backbone pretraining for later RL fine-tuning",
+    )
+    pretrain_parser.add_argument("--config", required=True, help="path to experiment json config")
+    pretrain_parser.add_argument("--output", help="optional output directory override")
+    pretrain_parser.add_argument("--epochs", type=int, default=10, help="number of supervised pretraining epochs")
+    pretrain_parser.add_argument("--batch-size", type=int, default=64, help="pretraining mini-batch size")
+    pretrain_parser.add_argument("--learning-rate", type=float, help="optional pretraining learning rate override")
 
     benchmark_parser = subparsers.add_parser("benchmark", help="run a multi-seed benchmark")
     benchmark_parser.add_argument("--config", required=True, help="path to experiment json config")
@@ -174,6 +185,19 @@ def handle_train(args: argparse.Namespace) -> None:
         print(f"best_checkpoint: {artifacts.best_checkpoint_path}")
     print(f"summary: {artifacts.summary_path}")
     print(f"eval_mean_reward: {summary['evaluation']['mean_reward']:.4f}")
+
+
+def handle_pretrain_patchtst(args: argparse.Namespace) -> None:
+    artifacts, summary = pretrain_patchtst_backbone(
+        args.config,
+        output_dir=args.output,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+    )
+    print(f"backbone_checkpoint: {artifacts.checkpoint_path}")
+    print(f"summary: {artifacts.summary_path}")
+    print(f"best_val_accuracy: {summary['best_val_accuracy']:.4f}")
 
 
 def handle_benchmark(args: argparse.Namespace) -> None:
@@ -414,6 +438,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "train":
         handle_train(args)
+        return
+    if args.command == "pretrain-patchtst":
+        handle_pretrain_patchtst(args)
         return
     if args.command == "benchmark":
         handle_benchmark(args)

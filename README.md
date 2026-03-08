@@ -100,6 +100,20 @@ Train with the auxiliary masked-patch version of PatchTST + PPO:
 uv run tsrl-train train --config configs/synthetic_regime_patchtst_aux.json
 ```
 
+Pretrain a PatchTST backbone with supervised regime labels before RL fine-tuning:
+
+```bash
+uv run tsrl-train pretrain-patchtst \
+  --config configs/synthetic_regime_patchtst_aux.json \
+  --output runs/synthetic_regime_patchtst_pretrain
+```
+
+Then fine-tune from the saved backbone checkpoint:
+
+```bash
+uv run tsrl-train train --config configs/synthetic_regime_patchtst_finetune_template.json
+```
+
 Train with the optional Transformer + PPO sequence model:
 
 ```bash
@@ -351,6 +365,8 @@ Exported rollout datasets now also include step-level numeric info traces such a
 
 The optional `torch-gru-ppo`, `torch-dlinear-ppo`, `torch-patchtst-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file. The PatchTST agent also supports masked-patch auxiliary learning through `aux_loss_coef`, `aux_mask_ratio`, and `aux_epochs`, so RL fine-tuning can be paired with a lightweight self-supervised temporal reconstruction objective.
 
+There is now also a lightweight supervised pretraining path for PatchTST. `tsrl-train pretrain-patchtst` trains the PatchTST backbone on regime classification labels derived from the same time-series windows, saves `backbone_checkpoint.pt`, and the RL agent can then load it through `agent.params.pretrained_backbone_path` with optional `freeze_backbone`.
+
 Those training-stability signals are now also available inside study and matrix specs. For example, `report_metrics` or `selection_metric` can reference names such as `train.approx_kl`, `train.value_loss`, `train_tail.clip_fraction`, or `validation.mean_reward`.
 
 The trainer now supports periodic validation, best-checkpoint selection, `history.csv`, optional early stopping through `trainer.*` config fields, reusable benchmark/study paths built on the same training loop, study-spec resolution into reproducible generated configs, spec-driven grids with tag filtering, multi-task benchmark matrices with per-task aggregation, and a resumable overnight optimizer with deadline, stop-file, progress snapshots, crash recovery, and watchdog supervision.
@@ -391,6 +407,7 @@ uv run python -m unittest discover -s tests -v
 - Time-series-backbone ready: besides GRU and Transformer, it now includes a lightweight DLinear policy path that matches the inductive bias of classic temporal decomposition models.
 - Foundation-model aligned: it now also includes a PatchTST-style policy path, so patch-based temporal tokenization can be studied without coupling the framework to a specific external model stack.
 - Representation-learning ready: the PatchTST path can now mix PPO with masked patch reconstruction, which starts to bridge RL optimization and time-series self-supervised learning inside the same framework.
+- Pretrain-and-finetune ready: PatchTST backbones can now be pretrained on supervised temporal labels and then loaded back into RL experiments, which is closer to how time-series foundation-model workflows are actually run.
 - Multi-asset capable: the same trainer and study stack now handles both single-series and portfolio-style multi-series tasks.
 - Research-friendly: the same core trainer powers single-run experiments, multi-seed benchmarks, and walk-forward validation.
 - Backtest-friendly: trading runs now report risk-aware metrics instead of only raw reward and terminal equity.
