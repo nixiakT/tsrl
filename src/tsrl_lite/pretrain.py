@@ -42,7 +42,9 @@ class PatchTSTPretrainingDataset:
 
 
 CLASSIFICATION_TASKS = {"regime_classification", "joint_regime_return"}
-REGRESSION_TASKS = {"future_return_regression", "joint_regime_return"}
+SCALAR_REGRESSION_TASKS = {"future_return_regression", "joint_regime_return"}
+VECTOR_REGRESSION_TASKS = {"future_return_vector_regression"}
+REGRESSION_TASKS = SCALAR_REGRESSION_TASKS | VECTOR_REGRESSION_TASKS
 SUPPORTED_PRETRAINING_TASKS = CLASSIFICATION_TASKS | REGRESSION_TASKS
 
 
@@ -54,12 +56,22 @@ def _task_uses_regression(task_type: str) -> bool:
     return task_type in REGRESSION_TASKS
 
 
+def _task_uses_scalar_regression(task_type: str) -> bool:
+    return task_type in SCALAR_REGRESSION_TASKS
+
+
+def _task_uses_vector_regression(task_type: str) -> bool:
+    return task_type in VECTOR_REGRESSION_TASKS
+
+
 def _task_heads(task_type: str) -> list[str]:
     heads: list[str] = []
     if _task_uses_classification(task_type):
         heads.append("regime_classification")
-    if _task_uses_regression(task_type):
+    if _task_uses_scalar_regression(task_type):
         heads.append("future_return_regression")
+    if _task_uses_vector_regression(task_type):
+        heads.append("future_return_vector_regression")
     return heads
 
 
@@ -68,15 +80,25 @@ def _future_return_value(
     current_index: int,
     forecast_horizon: int,
 ) -> float:
-    current_price = prices[current_index]
-    future_price = prices[current_index + forecast_horizon]
-    if np.ndim(current_price) > 0:
-        current_value = float(np.mean(current_price))
-        future_value = float(np.mean(future_price))
-    else:
-        current_value = float(current_price)
-        future_value = float(future_price)
-    return float((future_value - current_value) / max(current_value, 1e-8))
+    future_return_vector = _future_return_vector(
+        prices,
+        current_index=current_index,
+        forecast_horizon=forecast_horizon,
+    )
+    return float(np.mean(future_return_vector))
+
+
+def _future_return_vector(
+    prices: np.ndarray,
+    current_index: int,
+    forecast_horizon: int,
+) -> np.ndarray:
+    current_price = np.asarray(prices[current_index], dtype=float)
+    future_price = np.asarray(prices[current_index + forecast_horizon], dtype=float)
+    if current_price.ndim == 0:
+        current_price = current_price.reshape(1)
+        future_price = future_price.reshape(1)
+    return ((future_price - current_price) / np.maximum(current_price, 1e-8)).astype(np.float32)
 
 
 def _label_future_regime(
@@ -100,7 +122,7 @@ def _build_patchtst_pretraining_dataset(
 ) -> PatchTSTPretrainingDataset:
     observations: list[np.ndarray] = []
     classification_labels: list[int] | None = [] if _task_uses_classification(task_type) else None
-    regression_targets: list[float] | None = [] if _task_uses_regression(task_type) else None
+    regression_targets: list[float | np.ndarray] | None = [] if _task_uses_regression(task_type) else None
     prices_array = np.asarray(prices, dtype=float)
     for current_index in range(encoder.window_size - 1, len(prices_array) - forecast_horizon):
         window = prices_array[current_index - encoder.window_size + 1 : current_index + 1]
@@ -119,7 +141,16 @@ def _build_patchtst_pretraining_dataset(
         if classification_labels is not None:
             classification_labels.append(_label_future_regime(future_return, regime_threshold=regime_threshold))
         if regression_targets is not None:
-            regression_targets.append(future_return)
+            if _task_uses_vector_regression(task_type):
+                regression_targets.append(
+                    _future_return_vector(
+                        prices_array,
+                        current_index=current_index,
+                        forecast_horizon=forecast_horizon,
+                    )
+                )
+            else:
+                regression_targets.append(future_return)
     if not observations:
         raise ValueError("pretraining dataset is empty; increase series length or reduce forecast_horizon")
     return PatchTSTPretrainingDataset(
@@ -175,26 +206,25 @@ def pretrain_patchtst_backbone(
     if task_type not in SUPPORTED_PRETRAINING_TASKS:
         raise ValueError(
             "task_type must be 'regime_classification', 'future_return_regression', "
-            "or 'joint_regime_return'"
+            "'future_return_vector_regression', or 'joint_regime_return'"
         )
 
     config = load_experiment_config(config_path)
     if config.agent.name != "torch-patchtst-ppo":
         raise ValueError("pretrain-patchtst currently requires agent.name='torch-patchtst-ppo'")
-    if config.env.name != "regime-v0":
-        raise ValueError("pretrain-patchtst currently requires env.name='regime-v0'")
+    pretraining_future_steps = int(config.env.params.get("forecast_horizon", 8))
 
     splits = resolve_price_splits(
         config=config.data,
         seed=config.seed,
-        min_future_steps=required_future_steps(config),
+        min_future_steps=max(required_future_steps(config), pretraining_future_steps),
     )
     train_env = build_env(config, prices=splits.train_prices, seed=config.seed, index_offset=splits.train_offset)
     encoder = build_encoder(config, train_env)
     if len(encoder.observation_shape) != 2:
         raise ValueError("PatchTST pretraining requires a sequence-shaped encoder output")
 
-    forecast_horizon = int(config.env.params.get("forecast_horizon", 8))
+    forecast_horizon = pretraining_future_steps
     regime_threshold = float(config.env.params.get("regime_threshold", 0.002))
     train_dataset = _build_patchtst_pretraining_dataset(
         splits.train_prices,
@@ -251,7 +281,14 @@ def pretrain_patchtst_backbone(
         channel_independent=channel_independent,
     ).to(device)
     classification_head = nn.Linear(hidden_size, 3).to(device) if _task_uses_classification(task_type) else None
-    regression_head = nn.Linear(hidden_size, 1).to(device) if _task_uses_regression(task_type) else None
+    regression_target_dim = (
+        0
+        if train_dataset.regression_targets is None
+        else 1 if train_dataset.regression_targets.ndim == 1 else int(train_dataset.regression_targets.shape[1])
+    )
+    regression_head = (
+        nn.Linear(hidden_size, max(regression_target_dim, 1)).to(device) if _task_uses_regression(task_type) else None
+    )
     optimizer_parameters = [
         {"params": list(network.backbone_parameters()), "lr": float(learning_rate or config.agent.policy_lr)},
     ]
@@ -300,7 +337,7 @@ def pretrain_patchtst_backbone(
         best_selection_value = float("-inf")
         best_selection_mode = "max"
         selection_metric_name = "val_accuracy"
-    elif task_type == "future_return_regression":
+    elif task_type in {"future_return_regression", "future_return_vector_regression"}:
         best_selection_value = float("inf")
         best_selection_mode = "min"
         selection_metric_name = "val_mae"
@@ -347,7 +384,9 @@ def pretrain_patchtst_backbone(
                 accuracy_value = _classification_accuracy(classification_logits, classification_labels)
             if regression_head is not None and train_regression_tensor is not None:
                 regression_labels = train_regression_tensor[batch_index]
-                regression_predictions = regression_head(features).squeeze(-1)
+                regression_predictions = regression_head(features)
+                if regression_target_dim == 1:
+                    regression_predictions = regression_predictions.squeeze(-1)
                 regression_loss = nn.functional.mse_loss(regression_predictions, regression_labels)
                 supervised_loss = supervised_loss + (regression_loss_coef * regression_loss)
                 regression_loss_value = float(regression_loss.item())
@@ -409,7 +448,9 @@ def pretrain_patchtst_backbone(
                     }
                 )
             if regression_head is not None and val_regression_tensor is not None:
-                val_regression_predictions = regression_head(val_features).squeeze(-1)
+                val_regression_predictions = regression_head(val_features)
+                if regression_target_dim == 1:
+                    val_regression_predictions = val_regression_predictions.squeeze(-1)
                 val_regression_loss = float(
                     nn.functional.mse_loss(val_regression_predictions, val_regression_tensor).item()
                 )
@@ -430,7 +471,7 @@ def pretrain_patchtst_backbone(
             if task_type == "regime_classification":
                 record["val_loss"] = float(record["val_classification_loss"])
                 val_selection_value = float(record["val_accuracy"])
-            elif task_type == "future_return_regression":
+            elif task_type in {"future_return_regression", "future_return_vector_regression"}:
                 record["val_loss"] = float(record["val_regression_loss"])
                 val_selection_value = float(record["val_mae"])
             else:
@@ -472,7 +513,8 @@ def pretrain_patchtst_backbone(
                     },
                     "task": task_type,
                     "task_heads": _task_heads(task_type),
-                    "label_count": 3 if _task_uses_classification(task_type) else 1,
+                    "label_count": 3 if _task_uses_classification(task_type) else max(regression_target_dim, 1),
+                    "regression_target_dim": int(regression_target_dim),
                     "best_selection_metric": selection_metric_name,
                     "best_selection_value": best_selection_value,
                 },
@@ -494,6 +536,7 @@ def pretrain_patchtst_backbone(
         "selection_metric": selection_metric_name,
         "selection_mode": best_selection_mode,
         "best_selection_value": float(best_selection_value),
+        "regression_target_dim": int(regression_target_dim),
         "classification_loss_coef": float(classification_loss_coef),
         "regression_loss_coef": float(regression_loss_coef),
         "history": history,
@@ -503,7 +546,7 @@ def pretrain_patchtst_backbone(
     }
     if task_type == "regime_classification":
         summary["best_val_accuracy"] = float(best_selection_value)
-    elif task_type == "future_return_regression":
+    elif task_type in {"future_return_regression", "future_return_vector_regression"}:
         summary["best_val_mae"] = float(best_selection_value)
     else:
         summary["best_val_joint_loss"] = float(best_selection_value)
