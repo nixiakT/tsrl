@@ -54,7 +54,8 @@
       "aux_mask_ratio": 0.4,
       "aux_epochs": 1,
       "pretrained_backbone_path": "runs/synthetic_regime_patchtst_pretrain/backbone_checkpoint.pt",
-      "freeze_backbone": false,
+      "freeze_backbone": true,
+      "unfreeze_backbone_after_updates": 5,
       "device": "auto"
     }
   },

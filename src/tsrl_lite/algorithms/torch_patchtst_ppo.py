@@ -54,6 +54,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             aux_epochs: int = 1,
             pretrained_backbone_path: str | None = None,
             freeze_backbone: bool = False,
+            unfreeze_backbone_after_updates: int | None = None,
             device: str = "auto",
             seed: int = 7,
         ) -> None:
@@ -75,6 +76,12 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             self.aux_epochs = max(1, int(aux_epochs))
             self.pretrained_backbone_path = pretrained_backbone_path
             self.freeze_backbone = bool(freeze_backbone)
+            self.unfreeze_backbone_after_updates = (
+                None
+                if unfreeze_backbone_after_updates is None
+                else max(0, int(unfreeze_backbone_after_updates))
+            )
+            self.update_count = 0
             resolved_device = device
             if device == "auto":
                 resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -105,18 +112,31 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 if not isinstance(backbone_state_dict, dict):
                     raise ValueError("pretrained_backbone_path must point to a valid PatchTST backbone checkpoint")
                 self.network.load_backbone_state_dict(backbone_state_dict)
-            backbone_parameters = list(self.network.backbone_parameters())
-            if self.freeze_backbone:
-                for parameter in backbone_parameters:
-                    parameter.requires_grad_(False)
+            self.backbone_parameters = list(self.network.backbone_parameters())
+            self.backbone_frozen = bool(self.freeze_backbone)
+            self._set_backbone_trainable(not self.backbone_frozen)
             parameter_groups = []
-            trainable_backbone_parameters = [parameter for parameter in backbone_parameters if parameter.requires_grad]
-            self.has_trainable_backbone = bool(trainable_backbone_parameters)
-            if trainable_backbone_parameters:
-                parameter_groups.append({"params": trainable_backbone_parameters, "lr": policy_lr})
+            if self.backbone_parameters:
+                parameter_groups.append({"params": self.backbone_parameters, "lr": policy_lr})
             parameter_groups.append({"params": self.network.policy_head.parameters(), "lr": policy_lr})
             parameter_groups.append({"params": self.network.value_head.parameters(), "lr": value_lr})
             self.optimizer = optim.Adam(parameter_groups)
+
+        def _set_backbone_trainable(self, trainable: bool) -> None:
+            for parameter in self.backbone_parameters:
+                parameter.requires_grad_(trainable)
+            self.has_trainable_backbone = bool(trainable)
+
+        def _maybe_unfreeze_backbone(self) -> bool:
+            if not self.backbone_frozen:
+                return False
+            if self.unfreeze_backbone_after_updates is None:
+                return False
+            if self.update_count < self.unfreeze_backbone_after_updates:
+                return False
+            self.backbone_frozen = False
+            self._set_backbone_trainable(True)
+            return True
 
         def act(
             self,
@@ -137,6 +157,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             return action, probs, float(value.item()), observation
 
         def update(self, batch: EpisodeBatch) -> dict[str, float]:
+            backbone_unfrozen_this_update = self._maybe_unfreeze_backbone()
             prepared_batch = prepare_torch_ppo_batch(
                 batch=batch,
                 gamma=self.gamma,
@@ -158,6 +179,11 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 value_clip_epsilon=self.value_clip_epsilon,
                 target_kl=self.target_kl,
             )
+            self.update_count += 1
+            metrics["backbone_frozen"] = 1.0 if self.backbone_frozen else 0.0
+            metrics["backbone_trainable"] = 1.0 if self.has_trainable_backbone else 0.0
+            metrics["backbone_unfrozen_this_update"] = 1.0 if backbone_unfrozen_this_update else 0.0
+            metrics["backbone_update_count"] = float(self.update_count)
             if self.aux_loss_coef <= 0.0 or not self.has_trainable_backbone:
                 return metrics
 

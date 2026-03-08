@@ -189,6 +189,72 @@ class TorchPatchTSTSmokeTest(unittest.TestCase):
         self.assertGreater(metrics["aux_reconstruction_loss"], 0.0)
         self.assertGreater(metrics["aux_update_steps"], 0.0)
 
+    def test_torch_patchtst_unfreezes_backbone_after_warmup_updates(self) -> None:
+        encoder = SequenceWindowEncoder(window_size=8, agent_feature_dim=1)
+        agent = TorchPatchTSTPPOAgent(
+            encoder=encoder,
+            action_dim=3,
+            gamma=0.99,
+            gae_lambda=0.95,
+            policy_lr=0.001,
+            value_lr=0.001,
+            gradient_clip=1.0,
+            hidden_size=16,
+            patch_len=4,
+            stride=2,
+            num_layers=1,
+            num_heads=2,
+            dropout=0.0,
+            use_cls_token=True,
+            clip_epsilon=0.2,
+            update_epochs=2,
+            entropy_coef=0.01,
+            value_coef=0.5,
+            mini_batch_size=2,
+            normalize_advantages=True,
+            shuffle_minibatches=False,
+            target_kl=0.05,
+            value_clip_epsilon=0.2,
+            freeze_backbone=True,
+            unfreeze_backbone_after_updates=1,
+            device="cpu",
+            seed=61,
+        )
+
+        observations = np.random.default_rng(61).normal(
+            size=(6, *encoder.observation_shape)
+        ).astype(np.float32)
+        batch = EpisodeBatch(
+            observations=observations,
+            actions=np.asarray([0, 0, 1, 1, 2, 2], dtype=int),
+            rewards=np.asarray([1.0, 0.5, -0.2, 0.1, 0.3, -0.1], dtype=float),
+            dones=np.asarray([False, False, False, False, False, True], dtype=bool),
+            values=np.asarray([0.2, 0.3, 0.1, 0.0, -0.1, 0.2], dtype=float),
+            action_probs=np.asarray(
+                [
+                    [0.99, 0.005, 0.005],
+                    [0.99, 0.005, 0.005],
+                    [0.005, 0.99, 0.005],
+                    [0.005, 0.99, 0.005],
+                    [0.005, 0.005, 0.99],
+                    [0.005, 0.005, 0.99],
+                ],
+                dtype=float,
+            ),
+        )
+
+        first_metrics = agent.update(batch)
+        self.assertEqual(first_metrics["backbone_frozen"], 1.0)
+        self.assertEqual(first_metrics["backbone_trainable"], 0.0)
+        self.assertEqual(first_metrics["backbone_unfrozen_this_update"], 0.0)
+        self.assertTrue(all(not parameter.requires_grad for parameter in agent.backbone_parameters))
+
+        second_metrics = agent.update(batch)
+        self.assertEqual(second_metrics["backbone_frozen"], 0.0)
+        self.assertEqual(second_metrics["backbone_trainable"], 1.0)
+        self.assertEqual(second_metrics["backbone_unfrozen_this_update"], 1.0)
+        self.assertTrue(all(parameter.requires_grad for parameter in agent.backbone_parameters))
+
     def test_torch_patchtst_training_produces_pt_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -264,6 +330,7 @@ class TorchPatchTSTSmokeTest(unittest.TestCase):
             self.assertIn("train_update_metrics", summary)
             self.assertIn("approx_kl", summary["train_update_metrics"]["overall"])
             self.assertIn("explained_variance", summary["train_update_metrics"]["overall"])
+            self.assertIn("backbone_trainable", summary["train_update_metrics"]["overall"])
 
     def test_torch_patchtst_aux_training_reports_aux_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
