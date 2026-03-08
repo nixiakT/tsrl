@@ -12,10 +12,15 @@ try:
     from tsrl_lite.networks.torch_dlinear import TorchDLinearActorCriticNetwork
 except Exception:  # pragma: no cover - optional dependency path
     TorchDLinearActorCriticNetwork = None
+try:
+    from tsrl_lite.networks.torch_patchtst import TorchPatchTSTActorCriticNetwork
+except Exception:  # pragma: no cover - optional dependency path
+    TorchPatchTSTActorCriticNetwork = None
 
 __all__ = [
     "LinearActorCriticNetwork",
     "TorchGRUActorCriticNetwork",
     "TorchTransformerActorCriticNetwork",
     "TorchDLinearActorCriticNetwork",
+    "TorchPatchTSTActorCriticNetwork",
 ]

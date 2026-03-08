@@ -18,6 +18,7 @@ The project focuses on three things:
 - Linear actor-critic and linear PPO baselines
 - An optional trainable GRU + PPO sequence policy path
 - An optional trainable DLinear + PPO sequence policy path
+- An optional trainable PatchTST-style + PPO sequence policy path
 - Training and evaluation CLI
 - Multi-seed and walk-forward benchmark workflows
 - Multi-config study runner with leaderboard exports
@@ -85,6 +86,12 @@ Train with the optional DLinear + PPO sequence model:
 
 ```bash
 uv run tsrl-train train --config configs/synthetic_regime_dlinear.json
+```
+
+Train with the optional PatchTST-style + PPO sequence model:
+
+```bash
+uv run tsrl-train train --config configs/synthetic_regime_patchtst.json
 ```
 
 Train with the optional Transformer + PPO sequence model:
@@ -336,7 +343,7 @@ When `pareto_metrics` are present in a study or optimizer spec, study outputs al
 
 Exported rollout datasets now also include step-level numeric info traces such as `info_equity`, `info_turnover`, `info_market_return`, and matching `metadata.info_keys`.
 
-The optional `torch-gru-ppo`, `torch-dlinear-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file.
+The optional `torch-gru-ppo`, `torch-dlinear-ppo`, `torch-patchtst-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file.
 
 Those training-stability signals are now also available inside study and matrix specs. For example, `report_metrics` or `selection_metric` can reference names such as `train.approx_kl`, `train.value_loss`, `train_tail.clip_fraction`, or `validation.mean_reward`.
 
@@ -376,6 +383,7 @@ uv run python -m unittest discover -s tests -v
 - Plug-and-play: `env`, `encoder`, and `agent` are all selected by config and registry.
 - Time-series first: the framework operates on raw temporal windows and task-specific rewards instead of LLM-oriented token pipelines.
 - Time-series-backbone ready: besides GRU and Transformer, it now includes a lightweight DLinear policy path that matches the inductive bias of classic temporal decomposition models.
+- Foundation-model aligned: it now also includes a PatchTST-style policy path, so patch-based temporal tokenization can be studied without coupling the framework to a specific external model stack.
 - Multi-asset capable: the same trainer and study stack now handles both single-series and portfolio-style multi-series tasks.
 - Research-friendly: the same core trainer powers single-run experiments, multi-seed benchmarks, and walk-forward validation.
 - Backtest-friendly: trading runs now report risk-aware metrics instead of only raw reward and terminal equity.

@@ -13,6 +13,10 @@ try:
     from tsrl_lite.algorithms.torch_dlinear_ppo import TorchDLinearPPOAgent
 except Exception:  # pragma: no cover - optional dependency path
     TorchDLinearPPOAgent = None
+try:
+    from tsrl_lite.algorithms.torch_patchtst_ppo import TorchPatchTSTPPOAgent
+except Exception:  # pragma: no cover - optional dependency path
+    TorchPatchTSTPPOAgent = None
 
 __all__ = [
     "ActorCriticAgent",
@@ -20,5 +24,6 @@ __all__ = [
     "TorchGRUPPOAgent",
     "TorchTransformerPPOAgent",
     "TorchDLinearPPOAgent",
+    "TorchPatchTSTPPOAgent",
     "EpisodeBatch",
 ]
