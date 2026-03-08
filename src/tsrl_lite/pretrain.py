@@ -34,6 +34,35 @@ class PretrainingArtifacts:
     config_copy_path: Path
 
 
+@dataclass(slots=True)
+class PatchTSTPretrainingDataset:
+    observations: np.ndarray
+    classification_labels: np.ndarray | None = None
+    regression_targets: np.ndarray | None = None
+
+
+CLASSIFICATION_TASKS = {"regime_classification", "joint_regime_return"}
+REGRESSION_TASKS = {"future_return_regression", "joint_regime_return"}
+SUPPORTED_PRETRAINING_TASKS = CLASSIFICATION_TASKS | REGRESSION_TASKS
+
+
+def _task_uses_classification(task_type: str) -> bool:
+    return task_type in CLASSIFICATION_TASKS
+
+
+def _task_uses_regression(task_type: str) -> bool:
+    return task_type in REGRESSION_TASKS
+
+
+def _task_heads(task_type: str) -> list[str]:
+    heads: list[str] = []
+    if _task_uses_classification(task_type):
+        heads.append("regime_classification")
+    if _task_uses_regression(task_type):
+        heads.append("future_return_regression")
+    return heads
+
+
 def _future_return_value(
     prices: np.ndarray,
     current_index: int,
@@ -51,12 +80,9 @@ def _future_return_value(
 
 
 def _label_future_regime(
-    prices: np.ndarray,
-    current_index: int,
-    forecast_horizon: int,
+    future_return: float,
     regime_threshold: float,
 ) -> int:
-    future_return = _future_return_value(prices, current_index=current_index, forecast_horizon=forecast_horizon)
     if future_return > regime_threshold:
         return 2
     if future_return < -regime_threshold:
@@ -71,9 +97,10 @@ def _build_patchtst_pretraining_dataset(
     forecast_horizon: int,
     regime_threshold: float,
     task_type: str,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> PatchTSTPretrainingDataset:
     observations: list[np.ndarray] = []
-    labels: list[int | float] = []
+    classification_labels: list[int] | None = [] if _task_uses_classification(task_type) else None
+    regression_targets: list[float] | None = [] if _task_uses_regression(task_type) else None
     prices_array = np.asarray(prices, dtype=float)
     for current_index in range(encoder.window_size - 1, len(prices_array) - forecast_horizon):
         window = prices_array[current_index - encoder.window_size + 1 : current_index + 1]
@@ -84,29 +111,28 @@ def _build_patchtst_pretraining_dataset(
             context={"task": "patchtst_pretraining"},
         )
         observations.append(encoder.encode(state).astype(np.float32))
-        if task_type == "regime_classification":
-            labels.append(
-                _label_future_regime(
-                    prices_array,
-                    current_index=current_index,
-                    forecast_horizon=forecast_horizon,
-                    regime_threshold=regime_threshold,
-                )
-            )
-        elif task_type == "future_return_regression":
-            labels.append(
-                _future_return_value(
-                    prices_array,
-                    current_index=current_index,
-                    forecast_horizon=forecast_horizon,
-                )
-            )
-        else:
-            raise ValueError(f"unsupported pretraining task: {task_type}")
+        future_return = _future_return_value(
+            prices_array,
+            current_index=current_index,
+            forecast_horizon=forecast_horizon,
+        )
+        if classification_labels is not None:
+            classification_labels.append(_label_future_regime(future_return, regime_threshold=regime_threshold))
+        if regression_targets is not None:
+            regression_targets.append(future_return)
     if not observations:
         raise ValueError("pretraining dataset is empty; increase series length or reduce forecast_horizon")
-    label_dtype = np.int64 if task_type == "regime_classification" else np.float32
-    return np.asarray(observations, dtype=np.float32), np.asarray(labels, dtype=label_dtype)
+    return PatchTSTPretrainingDataset(
+        observations=np.asarray(observations, dtype=np.float32),
+        classification_labels=(
+            None
+            if classification_labels is None
+            else np.asarray(classification_labels, dtype=np.int64)
+        ),
+        regression_targets=(
+            None if regression_targets is None else np.asarray(regression_targets, dtype=np.float32)
+        ),
+    )
 
 
 def _classification_accuracy(logits, labels) -> float:
@@ -146,8 +172,11 @@ def pretrain_patchtst_backbone(
         raise ValueError("epochs must be >= 1")
     if batch_size < 1:
         raise ValueError("batch_size must be >= 1")
-    if task_type not in {"regime_classification", "future_return_regression"}:
-        raise ValueError("task_type must be 'regime_classification' or 'future_return_regression'")
+    if task_type not in SUPPORTED_PRETRAINING_TASKS:
+        raise ValueError(
+            "task_type must be 'regime_classification', 'future_return_regression', "
+            "or 'joint_regime_return'"
+        )
 
     config = load_experiment_config(config_path)
     if config.agent.name != "torch-patchtst-ppo":
@@ -167,7 +196,7 @@ def pretrain_patchtst_backbone(
 
     forecast_horizon = int(config.env.params.get("forecast_horizon", 8))
     regime_threshold = float(config.env.params.get("regime_threshold", 0.002))
-    train_observations, train_labels = _build_patchtst_pretraining_dataset(
+    train_dataset = _build_patchtst_pretraining_dataset(
         splits.train_prices,
         encoder=encoder,
         forecast_horizon=forecast_horizon,
@@ -176,7 +205,7 @@ def pretrain_patchtst_backbone(
     )
     min_validation_points = encoder.window_size + forecast_horizon + 1
     validation_prices = splits.val_prices if len(splits.val_prices) >= min_validation_points else splits.eval_prices
-    val_observations, val_labels = _build_patchtst_pretraining_dataset(
+    val_dataset = _build_patchtst_pretraining_dataset(
         validation_prices,
         encoder=encoder,
         forecast_horizon=forecast_horizon,
@@ -195,6 +224,12 @@ def pretrain_patchtst_backbone(
     use_cls_token = bool(params.get("use_cls_token", True))
     aux_loss_coef = max(0.0, float(params.get("aux_loss_coef", 0.0)))
     aux_mask_ratio = float(params.get("aux_mask_ratio", 0.4))
+    classification_loss_coef = max(0.0, float(params.get("pretrain_classification_loss_coef", 1.0)))
+    regression_loss_coef = max(0.0, float(params.get("pretrain_regression_loss_coef", 1.0)))
+    if _task_uses_classification(task_type) and classification_loss_coef <= 0.0:
+        raise ValueError("classification pretraining requires pretrain_classification_loss_coef > 0")
+    if _task_uses_regression(task_type) and regression_loss_coef <= 0.0:
+        raise ValueError("regression pretraining requires pretrain_regression_loss_coef > 0")
     device_name = str(params.get("device", "auto"))
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
@@ -213,26 +248,42 @@ def pretrain_patchtst_backbone(
         dropout=dropout,
         use_cls_token=use_cls_token,
     ).to(device)
-    head_output_dim = 3 if task_type == "regime_classification" else 1
-    pretrain_head = nn.Linear(hidden_size, head_output_dim).to(device)
-    optimizer = optim.Adam(
-        [
-            {"params": list(network.backbone_parameters()), "lr": float(learning_rate or config.agent.policy_lr)},
-            {"params": pretrain_head.parameters(), "lr": float(learning_rate or config.agent.policy_lr)},
-        ]
-    )
+    classification_head = nn.Linear(hidden_size, 3).to(device) if _task_uses_classification(task_type) else None
+    regression_head = nn.Linear(hidden_size, 1).to(device) if _task_uses_regression(task_type) else None
+    optimizer_parameters = [
+        {"params": list(network.backbone_parameters()), "lr": float(learning_rate or config.agent.policy_lr)},
+    ]
+    if classification_head is not None:
+        optimizer_parameters.append(
+            {"params": classification_head.parameters(), "lr": float(learning_rate or config.agent.policy_lr)}
+        )
+    if regression_head is not None:
+        optimizer_parameters.append(
+            {"params": regression_head.parameters(), "lr": float(learning_rate or config.agent.policy_lr)}
+        )
+    optimizer = optim.Adam(optimizer_parameters)
 
-    train_observations_tensor = torch.as_tensor(train_observations, dtype=torch.float32, device=device)
-    train_labels_tensor = torch.as_tensor(
-        train_labels,
-        dtype=torch.long if task_type == "regime_classification" else torch.float32,
-        device=device,
+    train_observations_tensor = torch.as_tensor(train_dataset.observations, dtype=torch.float32, device=device)
+    train_classification_tensor = (
+        None
+        if train_dataset.classification_labels is None
+        else torch.as_tensor(train_dataset.classification_labels, dtype=torch.long, device=device)
     )
-    val_observations_tensor = torch.as_tensor(val_observations, dtype=torch.float32, device=device)
-    val_labels_tensor = torch.as_tensor(
-        val_labels,
-        dtype=torch.long if task_type == "regime_classification" else torch.float32,
-        device=device,
+    train_regression_tensor = (
+        None
+        if train_dataset.regression_targets is None
+        else torch.as_tensor(train_dataset.regression_targets, dtype=torch.float32, device=device)
+    )
+    val_observations_tensor = torch.as_tensor(val_dataset.observations, dtype=torch.float32, device=device)
+    val_classification_tensor = (
+        None
+        if val_dataset.classification_labels is None
+        else torch.as_tensor(val_dataset.classification_labels, dtype=torch.long, device=device)
+    )
+    val_regression_tensor = (
+        None
+        if val_dataset.regression_targets is None
+        else torch.as_tensor(val_dataset.regression_targets, dtype=torch.float32, device=device)
     )
 
     pretrain_root = ensure_dir(output_dir or Path("runs") / f"{config.experiment_name}_patchtst_pretrain")
@@ -246,19 +297,31 @@ def pretrain_patchtst_backbone(
     if task_type == "regime_classification":
         best_selection_value = float("-inf")
         best_selection_mode = "max"
+        selection_metric_name = "val_accuracy"
+    elif task_type == "future_return_regression":
+        best_selection_value = float("inf")
+        best_selection_mode = "min"
+        selection_metric_name = "val_mae"
     else:
         best_selection_value = float("inf")
         best_selection_mode = "min"
+        selection_metric_name = "val_joint_loss"
     best_summary: dict[str, float] | None = None
-    resolved_batch_size = min(batch_size, len(train_observations))
+    resolved_batch_size = min(batch_size, len(train_dataset.observations))
 
     for epoch in range(1, epochs + 1):
         network.train()
-        pretrain_head.train()
+        if classification_head is not None:
+            classification_head.train()
+        if regression_head is not None:
+            regression_head.train()
         order = torch.randperm(len(train_observations_tensor), device=device)
         train_loss_total = 0.0
-        train_primary_metric_total = 0.0
-        train_secondary_metric_total = 0.0
+        train_classification_loss_total = 0.0
+        train_regression_loss_total = 0.0
+        train_accuracy_total = 0.0
+        train_mae_total = 0.0
+        train_rmse_total = 0.0
         train_aux_loss_total = 0.0
         train_aux_ratio_total = 0.0
         step_count = 0
@@ -266,18 +329,28 @@ def pretrain_patchtst_backbone(
         for start_index in range(0, len(train_observations_tensor), resolved_batch_size):
             batch_index = order[start_index : start_index + resolved_batch_size]
             batch_observations = train_observations_tensor[batch_index]
-            batch_labels = train_labels_tensor[batch_index]
             features = network.encode_features(batch_observations)
-            outputs = pretrain_head(features)
-            if task_type == "regime_classification":
-                supervised_loss = nn.functional.cross_entropy(outputs, batch_labels)
-                primary_metric_value = _classification_accuracy(outputs, batch_labels)
-                secondary_metric_value = 0.0
-            else:
-                predictions = outputs.squeeze(-1)
-                supervised_loss = nn.functional.mse_loss(predictions, batch_labels)
-                primary_metric_value = _regression_mae(predictions, batch_labels)
-                secondary_metric_value = _regression_rmse(predictions, batch_labels)
+            supervised_loss = torch.zeros((), dtype=batch_observations.dtype, device=device)
+            classification_loss_value = 0.0
+            regression_loss_value = 0.0
+            accuracy_value = 0.0
+            mae_value = 0.0
+            rmse_value = 0.0
+            if classification_head is not None and train_classification_tensor is not None:
+                classification_labels = train_classification_tensor[batch_index]
+                classification_logits = classification_head(features)
+                classification_loss = nn.functional.cross_entropy(classification_logits, classification_labels)
+                supervised_loss = supervised_loss + (classification_loss_coef * classification_loss)
+                classification_loss_value = float(classification_loss.item())
+                accuracy_value = _classification_accuracy(classification_logits, classification_labels)
+            if regression_head is not None and train_regression_tensor is not None:
+                regression_labels = train_regression_tensor[batch_index]
+                regression_predictions = regression_head(features).squeeze(-1)
+                regression_loss = nn.functional.mse_loss(regression_predictions, regression_labels)
+                supervised_loss = supervised_loss + (regression_loss_coef * regression_loss)
+                regression_loss_value = float(regression_loss.item())
+                mae_value = _regression_mae(regression_predictions, regression_labels)
+                rmse_value = _regression_rmse(regression_predictions, regression_labels)
             aux_loss_value = torch.zeros((), dtype=batch_observations.dtype, device=device)
             realized_mask_ratio = 0.0
             if aux_loss_coef > 0.0:
@@ -288,54 +361,88 @@ def pretrain_patchtst_backbone(
             total_loss = supervised_loss + (aux_loss_coef * aux_loss_value)
             optimizer.zero_grad()
             total_loss.backward()
-            nn.utils.clip_grad_norm_(list(network.backbone_parameters()) + list(pretrain_head.parameters()), 1.0)
+            parameters_for_clip = list(network.backbone_parameters())
+            if classification_head is not None:
+                parameters_for_clip.extend(list(classification_head.parameters()))
+            if regression_head is not None:
+                parameters_for_clip.extend(list(regression_head.parameters()))
+            nn.utils.clip_grad_norm_(parameters_for_clip, 1.0)
             optimizer.step()
 
             train_loss_total += float(supervised_loss.item())
-            train_primary_metric_total += float(primary_metric_value)
-            train_secondary_metric_total += float(secondary_metric_value)
+            train_classification_loss_total += classification_loss_value
+            train_regression_loss_total += regression_loss_value
+            train_accuracy_total += accuracy_value
+            train_mae_total += mae_value
+            train_rmse_total += rmse_value
             train_aux_loss_total += float(aux_loss_value.item())
             train_aux_ratio_total += float(realized_mask_ratio)
             step_count += 1
 
         network.eval()
-        pretrain_head.eval()
+        if classification_head is not None:
+            classification_head.eval()
+        if regression_head is not None:
+            regression_head.eval()
         with torch.no_grad():
             val_features = network.encode_features(val_observations_tensor)
-            val_outputs = pretrain_head(val_features)
+            record = {
+                "epoch": float(epoch),
+                "train_loss": train_loss_total / max(step_count, 1),
+                "train_aux_loss": train_aux_loss_total / max(step_count, 1),
+                "train_aux_mask_ratio": train_aux_ratio_total / max(step_count, 1),
+            }
+            if classification_head is not None and val_classification_tensor is not None:
+                val_classification_logits = classification_head(val_features)
+                val_classification_loss = float(
+                    nn.functional.cross_entropy(val_classification_logits, val_classification_tensor).item()
+                )
+                val_accuracy = _classification_accuracy(val_classification_logits, val_classification_tensor)
+                record.update(
+                    {
+                        "train_classification_loss": train_classification_loss_total / max(step_count, 1),
+                        "train_accuracy": train_accuracy_total / max(step_count, 1),
+                        "val_classification_loss": val_classification_loss,
+                        "val_accuracy": val_accuracy,
+                    }
+                )
+            if regression_head is not None and val_regression_tensor is not None:
+                val_regression_predictions = regression_head(val_features).squeeze(-1)
+                val_regression_loss = float(
+                    nn.functional.mse_loss(val_regression_predictions, val_regression_tensor).item()
+                )
+                val_mae = _regression_mae(val_regression_predictions, val_regression_tensor)
+                val_rmse = _regression_rmse(val_regression_predictions, val_regression_tensor)
+                val_corr = _regression_correlation(val_regression_predictions, val_regression_tensor)
+                record.update(
+                    {
+                        "train_regression_loss": train_regression_loss_total / max(step_count, 1),
+                        "train_mae": train_mae_total / max(step_count, 1),
+                        "train_rmse": train_rmse_total / max(step_count, 1),
+                        "val_regression_loss": val_regression_loss,
+                        "val_mae": val_mae,
+                        "val_rmse": val_rmse,
+                        "val_correlation": val_corr,
+                    }
+                )
             if task_type == "regime_classification":
-                val_loss = float(nn.functional.cross_entropy(val_outputs, val_labels_tensor).item())
-                val_selection_value = _classification_accuracy(val_outputs, val_labels_tensor)
-                record = {
-                    "epoch": float(epoch),
-                    "train_loss": train_loss_total / max(step_count, 1),
-                    "train_accuracy": train_primary_metric_total / max(step_count, 1),
-                    "train_aux_loss": train_aux_loss_total / max(step_count, 1),
-                    "train_aux_mask_ratio": train_aux_ratio_total / max(step_count, 1),
-                    "val_loss": val_loss,
-                    "val_accuracy": val_selection_value,
-                }
-                selection_metric_name = "val_accuracy"
+                record["val_loss"] = float(record["val_classification_loss"])
+                val_selection_value = float(record["val_accuracy"])
+            elif task_type == "future_return_regression":
+                record["val_loss"] = float(record["val_regression_loss"])
+                val_selection_value = float(record["val_mae"])
             else:
-                val_predictions = val_outputs.squeeze(-1)
-                val_loss = float(nn.functional.mse_loss(val_predictions, val_labels_tensor).item())
-                val_mae = _regression_mae(val_predictions, val_labels_tensor)
-                val_rmse = _regression_rmse(val_predictions, val_labels_tensor)
-                val_corr = _regression_correlation(val_predictions, val_labels_tensor)
-                val_selection_value = val_mae
-                record = {
-                    "epoch": float(epoch),
-                    "train_loss": train_loss_total / max(step_count, 1),
-                    "train_mae": train_primary_metric_total / max(step_count, 1),
-                    "train_rmse": train_secondary_metric_total / max(step_count, 1),
-                    "train_aux_loss": train_aux_loss_total / max(step_count, 1),
-                    "train_aux_mask_ratio": train_aux_ratio_total / max(step_count, 1),
-                    "val_loss": val_loss,
-                    "val_mae": val_mae,
-                    "val_rmse": val_rmse,
-                    "val_correlation": val_corr,
-                }
-                selection_metric_name = "val_mae"
+                joint_loss = (
+                    classification_loss_coef * float(record["val_classification_loss"])
+                    + regression_loss_coef * float(record["val_regression_loss"])
+                )
+                record["train_joint_loss"] = (
+                    classification_loss_coef * float(record["train_classification_loss"])
+                    + regression_loss_coef * float(record["train_regression_loss"])
+                )
+                record["val_joint_loss"] = joint_loss
+                record["val_loss"] = joint_loss
+                val_selection_value = joint_loss
         history.append(record)
 
         is_better = (
@@ -361,7 +468,8 @@ def pretrain_patchtst_backbone(
                         "use_cls_token": use_cls_token,
                     },
                     "task": task_type,
-                    "label_count": 3 if task_type == "regime_classification" else 1,
+                    "task_heads": _task_heads(task_type),
+                    "label_count": 3 if _task_uses_classification(task_type) else 1,
                     "best_selection_metric": selection_metric_name,
                     "best_selection_value": best_selection_value,
                 },
@@ -374,14 +482,17 @@ def pretrain_patchtst_backbone(
         "agent": config.agent.name,
         "encoder": config.encoder.name,
         "task": task_type,
+        "task_heads": _task_heads(task_type),
         "epochs": int(epochs),
         "batch_size": int(resolved_batch_size),
         "learning_rate": float(learning_rate or config.agent.policy_lr),
-        "train_examples": int(len(train_observations)),
-        "val_examples": int(len(val_observations)),
+        "train_examples": int(len(train_dataset.observations)),
+        "val_examples": int(len(val_dataset.observations)),
         "selection_metric": selection_metric_name,
         "selection_mode": best_selection_mode,
         "best_selection_value": float(best_selection_value),
+        "classification_loss_coef": float(classification_loss_coef),
+        "regression_loss_coef": float(regression_loss_coef),
         "history": history,
         "best_epoch": int(best_summary["epoch"]) if best_summary is not None else None,
         "best_metrics": best_summary,
@@ -389,8 +500,10 @@ def pretrain_patchtst_backbone(
     }
     if task_type == "regime_classification":
         summary["best_val_accuracy"] = float(best_selection_value)
-    else:
+    elif task_type == "future_return_regression":
         summary["best_val_mae"] = float(best_selection_value)
+    else:
+        summary["best_val_joint_loss"] = float(best_selection_value)
     dump_json(summary_path, summary)
     artifacts = PretrainingArtifacts(
         root_dir=pretrain_root,

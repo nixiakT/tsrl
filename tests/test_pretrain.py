@@ -122,6 +122,34 @@ class PatchTSTPretrainingTest(unittest.TestCase):
             self.assertIn("val_rmse", summary["best_metrics"])
             self.assertIn("val_correlation", summary["best_metrics"])
 
+    def test_pretrain_patchtst_supports_joint_multitask_pretraining(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_path = self._write_patchtst_config(tmp_path)
+
+            artifacts, summary = pretrain_patchtst_backbone(
+                config_path=config_path,
+                output_dir=tmp_path / "pretrain_joint",
+                epochs=2,
+                batch_size=16,
+                task_type="joint_regime_return",
+            )
+
+            self.assertTrue(artifacts.checkpoint_path.exists())
+            self.assertEqual(summary["task"], "joint_regime_return")
+            self.assertEqual(summary["task_heads"], ["regime_classification", "future_return_regression"])
+            self.assertEqual(summary["selection_metric"], "val_joint_loss")
+            self.assertGreaterEqual(summary["best_val_joint_loss"], 0.0)
+            self.assertIn("val_accuracy", summary["best_metrics"])
+            self.assertIn("val_mae", summary["best_metrics"])
+            self.assertIn("val_rmse", summary["best_metrics"])
+            self.assertIn("val_correlation", summary["best_metrics"])
+
+            payload = torch.load(artifacts.checkpoint_path, map_location="cpu")
+            self.assertEqual(payload["task"], "joint_regime_return")
+            self.assertEqual(payload["task_heads"], ["regime_classification", "future_return_regression"])
+            self.assertEqual(payload["best_selection_metric"], "val_joint_loss")
+
     def test_patchtst_agent_loads_and_freezes_pretrained_backbone(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

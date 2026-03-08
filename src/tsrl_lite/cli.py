@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     pretrain_parser.add_argument("--output", help="optional output directory override")
     pretrain_parser.add_argument(
         "--task",
-        choices=["regime_classification", "future_return_regression"],
+        choices=["regime_classification", "future_return_regression", "joint_regime_return"],
         default="regime_classification",
         help="supervised target used during PatchTST pretraining",
     )

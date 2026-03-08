@@ -117,6 +117,15 @@ uv run tsrl-train pretrain-patchtst \
   --output runs/synthetic_regime_patchtst_return_pretrain
 ```
 
+Or jointly pretrain the same backbone on both regime labels and future-return regression:
+
+```bash
+uv run tsrl-train pretrain-patchtst \
+  --config configs/synthetic_regime_patchtst_aux.json \
+  --task joint_regime_return \
+  --output runs/synthetic_regime_patchtst_joint_pretrain
+```
+
 Then fine-tune from the saved backbone checkpoint:
 
 ```bash
@@ -374,7 +383,7 @@ Exported rollout datasets now also include step-level numeric info traces such a
 
 The optional `torch-gru-ppo`, `torch-dlinear-ppo`, `torch-patchtst-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file. The PatchTST agent also supports masked-patch auxiliary learning through `aux_loss_coef`, `aux_mask_ratio`, and `aux_epochs`, so RL fine-tuning can be paired with a lightweight self-supervised temporal reconstruction objective.
 
-There is now also a lightweight supervised pretraining path for PatchTST. `tsrl-train pretrain-patchtst` can train the PatchTST backbone on either regime classification labels or future-return regression targets derived from the same time-series windows, saves `backbone_checkpoint.pt`, and the RL agent can then load it through `agent.params.pretrained_backbone_path` with optional `freeze_backbone`.
+There is now also a lightweight supervised pretraining path for PatchTST. `tsrl-train pretrain-patchtst` can train the PatchTST backbone on regime classification labels, future-return regression targets, or a joint multitask objective derived from the same time-series windows. It saves `backbone_checkpoint.pt`, and the RL agent can then load it through `agent.params.pretrained_backbone_path` with optional `freeze_backbone`. If you need to rebalance the multitask objective, `agent.params.pretrain_classification_loss_coef` and `agent.params.pretrain_regression_loss_coef` control the two supervised heads during pretraining.
 
 Those training-stability signals are now also available inside study and matrix specs. For example, `report_metrics` or `selection_metric` can reference names such as `train.approx_kl`, `train.value_loss`, `train_tail.clip_fraction`, or `validation.mean_reward`.
 
@@ -417,7 +426,7 @@ uv run python -m unittest discover -s tests -v
 - Foundation-model aligned: it now also includes a PatchTST-style policy path, so patch-based temporal tokenization can be studied without coupling the framework to a specific external model stack.
 - Representation-learning ready: the PatchTST path can now mix PPO with masked patch reconstruction, which starts to bridge RL optimization and time-series self-supervised learning inside the same framework.
 - Pretrain-and-finetune ready: PatchTST backbones can now be pretrained on supervised temporal labels and then loaded back into RL experiments, which is closer to how time-series foundation-model workflows are actually run.
-- Multi-objective pretraining ready: the same PatchTST pretraining entrypoint now supports both discrete regime targets and continuous future-return targets, so representation learning is not locked to one label space.
+- Multitask pretraining ready: the same PatchTST pretraining entrypoint now supports discrete regime targets, continuous future-return targets, and a joint objective over both, so representation learning is not locked to one label space.
 - Multi-asset capable: the same trainer and study stack now handles both single-series and portfolio-style multi-series tasks.
 - Research-friendly: the same core trainer powers single-run experiments, multi-seed benchmarks, and walk-forward validation.
 - Backtest-friendly: trading runs now report risk-aware metrics instead of only raw reward and terminal equity.
