@@ -94,6 +94,12 @@ Train with the optional PatchTST-style + PPO sequence model:
 uv run tsrl-train train --config configs/synthetic_regime_patchtst.json
 ```
 
+Train with the auxiliary masked-patch version of PatchTST + PPO:
+
+```bash
+uv run tsrl-train train --config configs/synthetic_regime_patchtst_aux.json
+```
+
 Train with the optional Transformer + PPO sequence model:
 
 ```bash
@@ -343,7 +349,7 @@ When `pareto_metrics` are present in a study or optimizer spec, study outputs al
 
 Exported rollout datasets now also include step-level numeric info traces such as `info_equity`, `info_turnover`, `info_market_return`, and matching `metadata.info_keys`.
 
-The optional `torch-gru-ppo`, `torch-dlinear-ppo`, `torch-patchtst-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file.
+The optional `torch-gru-ppo`, `torch-dlinear-ppo`, `torch-patchtst-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file. The PatchTST agent also supports masked-patch auxiliary learning through `aux_loss_coef`, `aux_mask_ratio`, and `aux_epochs`, so RL fine-tuning can be paired with a lightweight self-supervised temporal reconstruction objective.
 
 Those training-stability signals are now also available inside study and matrix specs. For example, `report_metrics` or `selection_metric` can reference names such as `train.approx_kl`, `train.value_loss`, `train_tail.clip_fraction`, or `validation.mean_reward`.
 
@@ -384,6 +390,7 @@ uv run python -m unittest discover -s tests -v
 - Time-series first: the framework operates on raw temporal windows and task-specific rewards instead of LLM-oriented token pipelines.
 - Time-series-backbone ready: besides GRU and Transformer, it now includes a lightweight DLinear policy path that matches the inductive bias of classic temporal decomposition models.
 - Foundation-model aligned: it now also includes a PatchTST-style policy path, so patch-based temporal tokenization can be studied without coupling the framework to a specific external model stack.
+- Representation-learning ready: the PatchTST path can now mix PPO with masked patch reconstruction, which starts to bridge RL optimization and time-series self-supervised learning inside the same framework.
 - Multi-asset capable: the same trainer and study stack now handles both single-series and portfolio-style multi-series tasks.
 - Research-friendly: the same core trainer powers single-run experiments, multi-seed benchmarks, and walk-forward validation.
 - Backtest-friendly: trading runs now report risk-aware metrics instead of only raw reward and terminal equity.

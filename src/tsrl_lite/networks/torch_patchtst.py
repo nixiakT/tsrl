@@ -5,9 +5,11 @@ from pathlib import Path
 try:
     import torch
     from torch import nn
+    from torch.nn import functional
 except ModuleNotFoundError:  # pragma: no cover - optional dependency path
     torch = None
     nn = None
+    functional = None
 
 
 if torch is not None:
@@ -51,6 +53,7 @@ if torch is not None:
             self.num_patches = num_patches
 
             self.patch_projection = nn.Linear(patch_len * input_dim, hidden_size)
+            self.reconstruction_head = nn.Linear(hidden_size, patch_len * input_dim)
             self.input_dropout = nn.Dropout(dropout)
             token_count = num_patches + (1 if self.use_cls_token else 0)
             self.position_embedding = nn.Parameter(torch.zeros(1, token_count, hidden_size))
@@ -58,6 +61,7 @@ if torch is not None:
                 self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_size))
             else:
                 self.register_parameter("cls_token", None)
+            self.mask_token = nn.Parameter(torch.zeros(1, 1, hidden_size))
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=hidden_size,
                 nhead=num_heads,
@@ -71,23 +75,52 @@ if torch is not None:
             self.policy_head = nn.Linear(hidden_size, action_dim)
             self.value_head = nn.Linear(hidden_size, 1)
 
-        def _patchify(self, sequence_batch):
+        def patchify(self, sequence_batch):
             patches = sequence_batch.unfold(dimension=1, size=self.patch_len, step=self.stride)
             patches = patches.permute(0, 1, 3, 2).contiguous()
             return patches.view(sequence_batch.size(0), self.num_patches, self.patch_len * self.input_dim)
 
-        def forward(self, sequence_batch):
-            tokens = self.patch_projection(self._patchify(sequence_batch))
+        def encode_patch_tokens(self, sequence_batch, patch_mask=None):
+            patch_embeddings = self.patch_projection(self.patchify(sequence_batch))
+            if patch_mask is not None:
+                if tuple(patch_mask.shape) != (sequence_batch.size(0), self.num_patches):
+                    raise ValueError("patch_mask must match batch_size x num_patches")
+                masked_embeddings = self.mask_token.expand(sequence_batch.size(0), self.num_patches, -1)
+                patch_embeddings = torch.where(patch_mask.unsqueeze(-1), masked_embeddings, patch_embeddings)
+            tokens = patch_embeddings
             if self.use_cls_token:
                 cls_tokens = self.cls_token.expand(sequence_batch.size(0), -1, -1)
                 tokens = torch.cat([cls_tokens, tokens], dim=1)
             tokens = self.input_dropout(tokens + self.position_embedding[:, : tokens.size(1), :])
-            encoded = self.encoder(tokens)
+            return self.encoder(tokens)
+
+        def encode_features(self, sequence_batch):
+            encoded = self.encode_patch_tokens(sequence_batch)
             if self.use_cls_token:
                 features = encoded[:, 0, :]
             else:
                 features = encoded.mean(dim=1)
             features = self.norm(features)
+            return features
+
+        def masked_patch_reconstruction_loss(self, sequence_batch, mask_ratio: float):
+            if mask_ratio <= 0.0:
+                zero = torch.zeros((), dtype=sequence_batch.dtype, device=sequence_batch.device)
+                return zero, 0.0
+            patches = self.patchify(sequence_batch)
+            batch_size = sequence_batch.size(0)
+            patch_count = self.num_patches
+            mask_count = max(1, min(patch_count, int(round(patch_count * float(mask_ratio)))))
+            random_scores = torch.rand(batch_size, patch_count, device=sequence_batch.device)
+            mask = random_scores.argsort(dim=1) < mask_count
+            encoded = self.encode_patch_tokens(sequence_batch, patch_mask=mask)
+            encoded_patches = encoded[:, 1:, :] if self.use_cls_token else encoded
+            reconstruction = self.reconstruction_head(encoded_patches)
+            loss = functional.mse_loss(reconstruction[mask], patches[mask])
+            return loss, float(mask.float().mean().item())
+
+        def forward(self, sequence_batch):
+            features = self.encode_features(sequence_batch)
             logits = self.policy_head(features)
             value = self.value_head(features).squeeze(-1)
             return logits, value

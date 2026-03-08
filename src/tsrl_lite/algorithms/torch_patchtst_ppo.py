@@ -49,6 +49,9 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             shuffle_minibatches: bool = True,
             target_kl: float | None = None,
             value_clip_epsilon: float | None = None,
+            aux_loss_coef: float = 0.0,
+            aux_mask_ratio: float = 0.4,
+            aux_epochs: int = 1,
             device: str = "auto",
             seed: int = 7,
         ) -> None:
@@ -65,6 +68,9 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             self.shuffle_minibatches = bool(shuffle_minibatches)
             self.target_kl = None if target_kl is None else float(target_kl)
             self.value_clip_epsilon = None if value_clip_epsilon is None else float(value_clip_epsilon)
+            self.aux_loss_coef = max(0.0, float(aux_loss_coef))
+            self.aux_mask_ratio = float(aux_mask_ratio)
+            self.aux_epochs = max(1, int(aux_epochs))
             resolved_device = device
             if device == "auto":
                 resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -93,8 +99,9 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 [
                     {"params": self.network.patch_projection.parameters(), "lr": policy_lr},
                     {"params": self.network.encoder.parameters(), "lr": policy_lr},
+                    {"params": self.network.reconstruction_head.parameters(), "lr": policy_lr},
                     {"params": self.network.policy_head.parameters(), "lr": policy_lr},
-                    {"params": [self.network.position_embedding], "lr": policy_lr},
+                    {"params": [self.network.position_embedding, self.network.mask_token], "lr": policy_lr},
                     {"params": self.network.value_head.parameters(), "lr": value_lr},
                     {"params": self.network.norm.parameters(), "lr": value_lr},
                 ]
@@ -131,7 +138,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 device=self.device,
                 normalize_advantages=self.normalize_advantages,
             )
-            return run_torch_ppo_update(
+            metrics = run_torch_ppo_update(
                 network=self.network,
                 optimizer=self.optimizer,
                 prepared_batch=prepared_batch,
@@ -145,6 +152,42 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 value_clip_epsilon=self.value_clip_epsilon,
                 target_kl=self.target_kl,
             )
+            if self.aux_loss_coef <= 0.0:
+                return metrics
+
+            observations = prepared_batch["observations"]
+            batch_size = int(observations.shape[0])
+            resolved_batch_size = (
+                batch_size if self.mini_batch_size is None else max(1, min(int(self.mini_batch_size), batch_size))
+            )
+            aux_loss_total = 0.0
+            aux_mask_ratio_total = 0.0
+            aux_steps = 0
+
+            self.network.train()
+            for _ in range(self.aux_epochs):
+                if self.shuffle_minibatches:
+                    order = torch.randperm(batch_size, device=observations.device)
+                else:
+                    order = torch.arange(batch_size, device=observations.device)
+                for start_index in range(0, batch_size, resolved_batch_size):
+                    batch_index = order[start_index : start_index + resolved_batch_size]
+                    aux_loss, realized_mask_ratio = self.network.masked_patch_reconstruction_loss(
+                        observations[batch_index],
+                        mask_ratio=self.aux_mask_ratio,
+                    )
+                    self.optimizer.zero_grad()
+                    (self.aux_loss_coef * aux_loss).backward()
+                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradient_clip)
+                    self.optimizer.step()
+                    aux_steps += 1
+                    aux_loss_total += float(aux_loss.item())
+                    aux_mask_ratio_total += float(realized_mask_ratio)
+
+            metrics["aux_reconstruction_loss"] = aux_loss_total / max(aux_steps, 1)
+            metrics["aux_mask_ratio"] = aux_mask_ratio_total / max(aux_steps, 1)
+            metrics["aux_update_steps"] = float(aux_steps)
+            return metrics
 
         def save(self, path: str) -> None:
             self.network.save(path, optimizer=self.optimizer)
