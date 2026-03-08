@@ -222,6 +222,7 @@ def pretrain_patchtst_backbone(
     num_heads = int(params.get("num_heads", 4))
     dropout = float(params.get("dropout", 0.1))
     use_cls_token = bool(params.get("use_cls_token", True))
+    channel_independent = bool(params.get("channel_independent", False))
     aux_loss_coef = max(0.0, float(params.get("aux_loss_coef", 0.0)))
     aux_mask_ratio = float(params.get("aux_mask_ratio", 0.4))
     classification_loss_coef = max(0.0, float(params.get("pretrain_classification_loss_coef", 1.0)))
@@ -247,6 +248,7 @@ def pretrain_patchtst_backbone(
         num_heads=num_heads,
         dropout=dropout,
         use_cls_token=use_cls_token,
+        channel_independent=channel_independent,
     ).to(device)
     classification_head = nn.Linear(hidden_size, 3).to(device) if _task_uses_classification(task_type) else None
     regression_head = nn.Linear(hidden_size, 1).to(device) if _task_uses_regression(task_type) else None
@@ -466,6 +468,7 @@ def pretrain_patchtst_backbone(
                         "num_heads": num_heads,
                         "dropout": dropout,
                         "use_cls_token": use_cls_token,
+                        "channel_independent": channel_independent,
                     },
                     "task": task_type,
                     "task_heads": _task_heads(task_type),

@@ -40,6 +40,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             num_heads: int = 4,
             dropout: float = 0.1,
             use_cls_token: bool = True,
+            channel_independent: bool = False,
             clip_epsilon: float = 0.2,
             update_epochs: int = 4,
             entropy_coef: float = 0.01,
@@ -105,6 +106,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 num_heads=num_heads,
                 dropout=dropout,
                 use_cls_token=use_cls_token,
+                channel_independent=channel_independent,
             ).to(self.device)
             if self.pretrained_backbone_path:
                 payload = torch.load(self.pretrained_backbone_path, map_location=self.device)

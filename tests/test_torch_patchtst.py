@@ -47,6 +47,30 @@ class TorchPatchTSTSmokeTest(unittest.TestCase):
         self.assertEqual(tuple(logits.shape), (2, 4))
         self.assertEqual(tuple(value.shape), (2,))
 
+    def test_torch_patchtst_channel_independent_builds_multivariate_tokens(self) -> None:
+        network = TorchPatchTSTActorCriticNetwork(
+            input_dim=4,
+            sequence_length=16,
+            hidden_size=8,
+            action_dim=5,
+            patch_len=4,
+            stride=2,
+            num_layers=1,
+            num_heads=2,
+            dropout=0.0,
+            use_cls_token=True,
+            channel_independent=True,
+        )
+        sequence_batch = torch.randn(2, 16, 4)
+        patch_tokens = network.patchify(sequence_batch)
+        logits, value = network(sequence_batch)
+
+        self.assertEqual(network.num_patches, 7)
+        self.assertEqual(network.patch_token_count, 28)
+        self.assertEqual(tuple(patch_tokens.shape), (2, 28, 4))
+        self.assertEqual(tuple(logits.shape), (2, 5))
+        self.assertEqual(tuple(value.shape), (2,))
+
     def test_torch_patchtst_masked_reconstruction_loss_is_positive(self) -> None:
         network = TorchPatchTSTActorCriticNetwork(
             input_dim=2,
@@ -407,6 +431,91 @@ class TorchPatchTSTSmokeTest(unittest.TestCase):
             self.assertIn("train_update_metrics", summary)
             self.assertIn("aux_reconstruction_loss", summary["train_update_metrics"]["overall"])
             self.assertIn("aux_mask_ratio", summary["train_update_metrics"]["overall"])
+
+    def test_torch_patchtst_portfolio_training_supports_channel_independent_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_path = tmp_path / "torch_patchtst_portfolio_config.json"
+            output_dir = tmp_path / "portfolio_run"
+            config = {
+                "experiment_name": "torch_patchtst_portfolio_smoke",
+                "seed": 79,
+                "data": {
+                    "source": "synthetic",
+                    "window_size": 24,
+                    "train_ratio": 0.8,
+                    "synthetic": {
+                        "steps": 1000,
+                        "assets": 3,
+                        "drift": 0.0012,
+                        "volatility": 0.007,
+                        "seasonality": 0.002,
+                        "correlation": 0.35
+                    }
+                },
+                "env": {
+                    "name": "portfolio-v0",
+                    "reward_scale": 1.0,
+                    "episode_horizon": 96,
+                    "random_reset": True,
+                    "params": {
+                        "trading_cost": 0.0005,
+                        "allocation_candidates": [
+                            [0.0, 0.0, 0.0],
+                            [0.3333333333, 0.3333333333, 0.3333333333],
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0]
+                        ]
+                    }
+                },
+                "encoder": {
+                    "name": "sequence-window-v0",
+                    "params": {}
+                },
+                "agent": {
+                    "name": "torch-patchtst-ppo",
+                    "gamma": 0.99,
+                    "gae_lambda": 0.95,
+                    "policy_lr": 0.001,
+                    "value_lr": 0.001,
+                    "gradient_clip": 1.0,
+                    "params": {
+                        "hidden_size": 16,
+                        "patch_len": 4,
+                        "stride": 2,
+                        "num_layers": 1,
+                        "num_heads": 2,
+                        "dropout": 0.0,
+                        "use_cls_token": True,
+                        "channel_independent": True,
+                        "clip_epsilon": 0.2,
+                        "update_epochs": 2,
+                        "entropy_coef": 0.01,
+                        "value_coef": 0.5,
+                        "mini_batch_size": 8,
+                        "target_kl": 0.05,
+                        "value_clip_epsilon": 0.2,
+                        "device": "cpu"
+                    }
+                },
+                "trainer": {
+                    "episodes": 3,
+                    "eval_episodes": 1,
+                    "log_interval": 3,
+                    "checkpoint_dir": str(output_dir)
+                }
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            artifacts, summary = train_experiment(config_path=config_path, output_dir=output_dir)
+
+            self.assertTrue(artifacts.checkpoint_path.exists())
+            self.assertEqual(artifacts.checkpoint_path.suffix, ".pt")
+            self.assertEqual(summary["agent"], "torch-patchtst-ppo")
+            self.assertEqual(summary["env"], "portfolio-v0")
+            self.assertIn("mean_sharpe_ratio", summary["evaluation"])
+            self.assertIn("backbone_trainable", summary["train_update_metrics"]["overall"])
 
 
 if __name__ == "__main__":

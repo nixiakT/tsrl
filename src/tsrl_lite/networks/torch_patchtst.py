@@ -37,6 +37,7 @@ if torch is not None:
             num_heads: int = 4,
             dropout: float = 0.1,
             use_cls_token: bool = True,
+            channel_independent: bool = False,
         ) -> None:
             super().__init__()
             if patch_len < 1:
@@ -60,12 +61,15 @@ if torch is not None:
             self.num_heads = num_heads
             self.dropout = dropout
             self.use_cls_token = bool(use_cls_token)
+            self.channel_independent = bool(channel_independent)
             self.num_patches = num_patches
+            self.patch_token_count = num_patches * input_dim if self.channel_independent else num_patches
 
-            self.patch_projection = nn.Linear(patch_len * input_dim, hidden_size)
-            self.reconstruction_head = nn.Linear(hidden_size, patch_len * input_dim)
+            projection_input_dim = patch_len if self.channel_independent else patch_len * input_dim
+            self.patch_projection = nn.Linear(projection_input_dim, hidden_size)
+            self.reconstruction_head = nn.Linear(hidden_size, projection_input_dim)
             self.input_dropout = nn.Dropout(dropout)
-            token_count = num_patches + (1 if self.use_cls_token else 0)
+            token_count = self.patch_token_count + (1 if self.use_cls_token else 0)
             self.position_embedding = nn.Parameter(torch.zeros(1, token_count, hidden_size))
             if self.use_cls_token:
                 self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_size))
@@ -87,15 +91,17 @@ if torch is not None:
 
         def patchify(self, sequence_batch):
             patches = sequence_batch.unfold(dimension=1, size=self.patch_len, step=self.stride)
+            if self.channel_independent:
+                return patches.contiguous().view(sequence_batch.size(0), self.patch_token_count, self.patch_len)
             patches = patches.permute(0, 1, 3, 2).contiguous()
             return patches.view(sequence_batch.size(0), self.num_patches, self.patch_len * self.input_dim)
 
         def encode_patch_tokens(self, sequence_batch, patch_mask=None):
             patch_embeddings = self.patch_projection(self.patchify(sequence_batch))
             if patch_mask is not None:
-                if tuple(patch_mask.shape) != (sequence_batch.size(0), self.num_patches):
-                    raise ValueError("patch_mask must match batch_size x num_patches")
-                masked_embeddings = self.mask_token.expand(sequence_batch.size(0), self.num_patches, -1)
+                if tuple(patch_mask.shape) != (sequence_batch.size(0), self.patch_token_count):
+                    raise ValueError("patch_mask must match batch_size x patch_token_count")
+                masked_embeddings = self.mask_token.expand(sequence_batch.size(0), self.patch_token_count, -1)
                 patch_embeddings = torch.where(patch_mask.unsqueeze(-1), masked_embeddings, patch_embeddings)
             tokens = patch_embeddings
             if self.use_cls_token:
@@ -119,7 +125,7 @@ if torch is not None:
                 return zero, 0.0
             patches = self.patchify(sequence_batch)
             batch_size = sequence_batch.size(0)
-            patch_count = self.num_patches
+            patch_count = self.patch_token_count
             mask_count = max(1, min(patch_count, int(round(patch_count * float(mask_ratio)))))
             random_scores = torch.rand(batch_size, patch_count, device=sequence_batch.device)
             mask = random_scores.argsort(dim=1) < mask_count
@@ -184,6 +190,7 @@ if torch is not None:
                     "num_heads": self.num_heads,
                     "dropout": self.dropout,
                     "use_cls_token": self.use_cls_token,
+                    "channel_independent": self.channel_independent,
                 },
             }
             if optimizer is not None:
