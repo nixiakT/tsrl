@@ -1,0 +1,141 @@
+{
+  "tags": ["matrix", "cross-task", "stability"],
+  "matrix_selection_metric": "train.approx_kl",
+  "matrix_selection_mode": "min",
+  "matrix_metric_constraints": {
+    "train.approx_kl": {
+      "max": 0.05
+    }
+  },
+  "tasks": [
+    {
+      "name": "trading_core",
+      "config": "synthetic_trading.json",
+      "tags": ["trading"],
+      "mode": "train",
+      "task_weight": 1.0,
+      "selection_metric": "mean_sharpe_ratio",
+      "selection_mode": "max",
+      "report_metrics": [
+        "mean_terminal_score",
+        "mean_sharpe_ratio",
+        "mean_max_drawdown",
+        "train.approx_kl",
+        "train_tail.clip_fraction"
+      ],
+      "pareto_metrics": {
+        "mean_sharpe_ratio": "max",
+        "mean_max_drawdown": "min"
+      },
+      "overrides": {
+        "trainer.episodes": 8,
+        "trainer.log_interval": 4,
+        "trainer.eval_interval": 4
+      }
+    },
+    {
+      "name": "regime_core",
+      "config": "synthetic_regime.json",
+      "tags": ["regime"],
+      "mode": "train",
+      "task_weight": 0.8,
+      "selection_metric": "mean_info_accuracy",
+      "selection_mode": "max",
+      "report_metrics": [
+        "mean_terminal_score",
+        "mean_info_accuracy",
+        "mean_info_future_return",
+        "train.approx_kl",
+        "train.value_loss"
+      ],
+      "overrides": {
+        "trainer.episodes": 8,
+        "trainer.log_interval": 4,
+        "trainer.eval_interval": 4
+      }
+    },
+    {
+      "name": "portfolio_core",
+      "config": "synthetic_portfolio.json",
+      "tags": ["portfolio"],
+      "mode": "train",
+      "task_weight": 1.2,
+      "selection_metric": "mean_sharpe_ratio",
+      "selection_mode": "max",
+      "report_metrics": [
+        "mean_terminal_score",
+        "mean_sharpe_ratio",
+        "mean_max_drawdown",
+        "mean_info_gross_exposure",
+        "train.approx_kl",
+        "train_tail.clip_fraction"
+      ],
+      "pareto_metrics": {
+        "mean_sharpe_ratio": "max",
+        "mean_max_drawdown": "min"
+      },
+      "overrides": {
+        "trainer.episodes": 8,
+        "trainer.log_interval": 4,
+        "trainer.eval_interval": 4
+      }
+    }
+  ],
+  "methods": [
+    {
+      "name": "linear_default",
+      "tags": ["baseline", "linear"]
+    },
+    {
+      "name": "gru_sequence",
+      "tags": ["sequence", "gru"],
+      "overrides": {
+        "encoder.name": "sequence-window-v0",
+        "encoder.params": {},
+        "agent.name": "torch-gru-ppo",
+        "agent.policy_lr": 0.001,
+        "agent.value_lr": 0.001,
+        "agent.gradient_clip": 1.0,
+        "agent.params": {
+          "hidden_size": 64,
+          "num_layers": 1,
+          "dropout": 0.0,
+          "clip_epsilon": 0.2,
+          "update_epochs": 3,
+          "entropy_coef": 0.01,
+          "value_coef": 0.5,
+          "mini_batch_size": 64,
+          "target_kl": 0.05,
+          "value_clip_epsilon": 0.2,
+          "device": "auto"
+        }
+      }
+    },
+    {
+      "name": "transformer_sequence",
+      "tags": ["sequence", "transformer"],
+      "overrides": {
+        "encoder.name": "sequence-window-v0",
+        "encoder.params": {},
+        "agent.name": "torch-transformer-ppo",
+        "agent.policy_lr": 0.0008,
+        "agent.value_lr": 0.0008,
+        "agent.gradient_clip": 1.0,
+        "agent.params": {
+          "hidden_size": 64,
+          "num_layers": 2,
+          "num_heads": 4,
+          "dropout": 0.1,
+          "clip_epsilon": 0.2,
+          "update_epochs": 3,
+          "entropy_coef": 0.01,
+          "value_coef": 0.5,
+          "mini_batch_size": 64,
+          "target_kl": 0.05,
+          "value_clip_epsilon": 0.2,
+          "device": "auto"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "tags": ["matrix", "synthetic"],
+  "tasks": [
+    {
+      "name": "synthetic_trading_suite",
+      "config": "synthetic_trading.json",
+      "tags": ["trading"],
+      "mode": "train",
+      "selection_metric": "mean_sharpe_ratio",
+      "selection_mode": "max",
+      "metric_constraints": {
+        "mean_max_drawdown": {
+          "max": 0.85
+        }
+      },
+      "report_metrics": [
+        "mean_terminal_score",
+        "mean_sharpe_ratio",
+        "mean_max_drawdown"
+      ],
+      "pareto_metrics": {
+        "mean_sharpe_ratio": "max",
+        "mean_max_drawdown": "min"
+      },
+      "overrides": {
+        "trainer.episodes": 12,
+        "trainer.log_interval": 4,
+        "trainer.eval_interval": 4
+      }
+    },
+    {
+      "name": "synthetic_regime_suite",
+      "config": "synthetic_regime.json",
+      "tags": ["regime"],
+      "mode": "train",
+      "selection_metric": "mean_info_accuracy",
+      "selection_mode": "max",
+      "report_metrics": [
+        "mean_terminal_score",
+        "mean_info_accuracy",
+        "mean_info_future_return"
+      ],
+      "overrides": {
+        "trainer.episodes": 10,
+        "trainer.log_interval": 5,
+        "trainer.eval_interval": 5
+      }
+    }
+  ],
+  "methods": [
+    {
+      "name": "returns_linear",
+      "tags": ["linear", "returns"],
+      "overrides": {
+        "encoder.name": "returns-context-v0",
+        "encoder.params": {},
+        "agent.name": "linear-ppo"
+      }
+    },
+    {
+      "name": "price_linear",
+      "tags": ["linear", "price"],
+      "overrides": {
+        "encoder.name": "price-context-v0",
+        "encoder.params": {},
+        "agent.name": "linear-ppo"
+      }
+    }
+  ]
+}

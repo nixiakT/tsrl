@@ -1,0 +1,51 @@
+{
+  "name": "overnight_trading_risk_aware_search",
+  "base_config": "synthetic_trading.json",
+  "mode": "train",
+  "selection_metric": "mean_sharpe_ratio",
+  "selection_mode": "max",
+  "metric_constraints": {
+    "mean_max_drawdown": {
+      "max": 0.35
+    }
+  },
+  "report_metrics": [
+    "mean_terminal_return",
+    "mean_calmar_ratio"
+  ],
+  "pareto_metrics": {
+    "mean_sharpe_ratio": "max",
+    "mean_max_drawdown": "min"
+  },
+  "seed": 17,
+  "population_size": 4,
+  "elite_size": 2,
+  "mutation_rate": 0.4,
+  "search_space": {
+    "encoder.name": [
+      "multi-scale-context-v0",
+      "returns-context-v0",
+      "price-context-v0"
+    ],
+    "agent.policy_lr": [
+      0.02,
+      0.03,
+      0.05
+    ],
+    "agent.value_lr": [
+      0.05,
+      0.08,
+      0.1
+    ],
+    "agent.params.clip_epsilon": [
+      0.1,
+      0.15,
+      0.2
+    ],
+    "agent.params.update_epochs": [
+      3,
+      4,
+      5
+    ]
+  }
+}

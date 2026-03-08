@@ -1,0 +1,65 @@
+{
+  "experiment_name": "synthetic_portfolio",
+  "seed": 17,
+  "data": {
+    "source": "synthetic",
+    "window_size": 32,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "synthetic": {
+      "steps": 2600,
+      "assets": 3,
+      "drift": 0.0013,
+      "volatility": 0.009,
+      "seasonality": 0.0025,
+      "correlation": 0.45
+    }
+  },
+  "env": {
+    "name": "portfolio-v0",
+    "reward_scale": 1.0,
+    "episode_horizon": 192,
+    "random_reset": true,
+    "params": {
+      "trading_cost": 0.0005,
+      "allocation_candidates": [
+        [0.0, 0.0, 0.0],
+        [0.3333333333, 0.3333333333, 0.3333333333],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.5, 0.5, 0.0],
+        [0.5, 0.0, 0.5],
+        [0.0, 0.5, 0.5]
+      ]
+    }
+  },
+  "encoder": {
+    "name": "multi-asset-context-v0",
+    "params": {}
+  },
+  "agent": {
+    "name": "linear-ppo",
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_lr": 0.025,
+    "value_lr": 0.05,
+    "gradient_clip": 5.0,
+    "params": {
+      "clip_epsilon": 0.2,
+      "update_epochs": 4
+    }
+  },
+  "trainer": {
+    "episodes": 60,
+    "val_episodes": 1,
+    "eval_episodes": 1,
+    "log_interval": 10,
+    "eval_interval": 10,
+    "selection_metric": "mean_sharpe_ratio",
+    "selection_mode": "max",
+    "save_best": true,
+    "early_stop_patience": null,
+    "checkpoint_dir": "runs/synthetic_portfolio"
+  }
+}

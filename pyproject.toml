@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tsrl-lite"
+version = "0.1.0"
+description = "A lightweight, plug-and-play time-series reinforcement learning framework."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.2,<3",
+]
+
+[project.optional-dependencies]
+torch = [
+  "torch>=2.3,<3",
+]
+
+[project.scripts]
+tsrl-train = "tsrl_lite.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

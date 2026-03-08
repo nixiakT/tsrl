@@ -1,0 +1,38 @@
+{
+  "name": "overnight_trading_search",
+  "base_config": "synthetic_trading.json",
+  "mode": "train",
+  "selection_metric": "mean_terminal_score",
+  "selection_mode": "max",
+  "seed": 17,
+  "population_size": 4,
+  "elite_size": 2,
+  "mutation_rate": 0.4,
+  "search_space": {
+    "encoder.name": [
+      "multi-scale-context-v0",
+      "returns-context-v0",
+      "price-context-v0"
+    ],
+    "agent.policy_lr": [
+      0.02,
+      0.03,
+      0.05
+    ],
+    "agent.value_lr": [
+      0.05,
+      0.08,
+      0.1
+    ],
+    "agent.params.clip_epsilon": [
+      0.1,
+      0.15,
+      0.2
+    ],
+    "agent.params.update_epochs": [
+      3,
+      4,
+      5
+    ]
+  }
+}

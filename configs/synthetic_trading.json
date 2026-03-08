@@ -1,0 +1,58 @@
+{
+  "experiment_name": "synthetic_trading",
+  "seed": 7,
+  "data": {
+    "source": "synthetic",
+    "window_size": 32,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "price_column": "price",
+    "synthetic": {
+      "steps": 3000,
+      "drift": 0.0015,
+      "volatility": 0.008,
+      "seasonality": 0.003
+    }
+  },
+  "env": {
+    "name": "trading-v0",
+    "reward_scale": 1.0,
+    "episode_horizon": 256,
+    "random_reset": true,
+    "params": {
+      "positions": [-1.0, 0.0, 1.0],
+      "trading_cost": 0.0005
+    }
+  },
+  "encoder": {
+    "name": "multi-scale-context-v0",
+    "params": {
+      "short_window": 4,
+      "long_window": 12
+    }
+  },
+  "agent": {
+    "name": "linear-ppo",
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_lr": 0.03,
+    "value_lr": 0.08,
+    "gradient_clip": 5.0,
+    "params": {
+      "clip_epsilon": 0.2,
+      "update_epochs": 4
+    }
+  },
+  "trainer": {
+    "episodes": 80,
+    "val_episodes": 1,
+    "eval_episodes": 1,
+    "log_interval": 10,
+    "eval_interval": 10,
+    "selection_metric": "mean_terminal_score",
+    "selection_mode": "max",
+    "save_best": true,
+    "early_stop_patience": null,
+    "checkpoint_dir": "runs/synthetic_trading"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "base_config": "synthetic_trading.json",
+  "mode": "train",
+  "selection_metric": "mean_sharpe_ratio",
+  "selection_mode": "max",
+  "metric_constraints": {
+    "mean_max_drawdown": {
+      "max": 0.35
+    }
+  },
+  "report_metrics": [
+    "mean_terminal_return",
+    "mean_calmar_ratio"
+  ],
+  "pareto_metrics": {
+    "mean_sharpe_ratio": "max",
+    "mean_max_drawdown": "min"
+  },
+  "tags": ["trading", "risk-aware"],
+  "experiments": [
+    {
+      "name": "risk_encoder_grid",
+      "tags": ["encoder"],
+      "grid": {
+        "encoder.name": [
+          "multi-scale-context-v0",
+          "returns-context-v0",
+          "price-context-v0"
+        ]
+      }
+    }
+  ]
+}

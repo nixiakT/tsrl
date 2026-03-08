@@ -1,0 +1,41 @@
+{
+  "name": "overnight_matrix_gru_search",
+  "base_matrix_spec": "matrix_cross_task_stability_suite.json",
+  "target_method": "gru_sequence",
+  "selection_metric": "matrix.mean_normalized_rank_score",
+  "selection_mode": "max",
+  "metric_constraints": {
+    "train.approx_kl": {
+      "max": 0.05
+    }
+  },
+  "seed": 23,
+  "population_size": 4,
+  "elite_size": 2,
+  "mutation_rate": 0.35,
+  "search_space": {
+    "agent.policy_lr": [
+      0.0007,
+      0.001,
+      0.0012
+    ],
+    "agent.params.hidden_size": [
+      32,
+      64,
+      96
+    ],
+    "agent.params.num_layers": [
+      1,
+      2
+    ],
+    "agent.params.target_kl": [
+      0.03,
+      0.05,
+      0.08
+    ],
+    "agent.params.value_clip_epsilon": [
+      0.1,
+      0.2
+    ]
+  }
+}

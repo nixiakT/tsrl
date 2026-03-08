@@ -1,0 +1,51 @@
+{
+  "experiment_name": "csv_multiasset_portfolio_template",
+  "seed": 17,
+  "data": {
+    "source": "csv",
+    "csv_path": "data/multiasset_prices.csv",
+    "price_columns": ["asset_a_close", "asset_b_close", "asset_c_close"],
+    "timestamp_column": "timestamp",
+    "window_size": 32,
+    "val_ratio": 0.1,
+    "train_end_time": "2024-09-30T00:00:00",
+    "val_end_time": "2024-11-15T00:00:00"
+  },
+  "env": {
+    "name": "portfolio-v0",
+    "reward_scale": 1.0,
+    "episode_horizon": 192,
+    "random_reset": true,
+    "params": {
+      "trading_cost": 0.0005
+    }
+  },
+  "encoder": {
+    "name": "multi-asset-context-v0",
+    "params": {}
+  },
+  "agent": {
+    "name": "linear-ppo",
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_lr": 0.025,
+    "value_lr": 0.05,
+    "gradient_clip": 5.0,
+    "params": {
+      "clip_epsilon": 0.2,
+      "update_epochs": 4
+    }
+  },
+  "trainer": {
+    "episodes": 80,
+    "val_episodes": 1,
+    "eval_episodes": 1,
+    "log_interval": 10,
+    "eval_interval": 10,
+    "selection_metric": "mean_sharpe_ratio",
+    "selection_mode": "max",
+    "save_best": true,
+    "early_stop_patience": null,
+    "checkpoint_dir": "runs/csv_multiasset_portfolio"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "base_config": "synthetic_trading.json",
+  "mode": "train",
+  "selection_metric": "mean_terminal_score",
+  "selection_mode": "max",
+  "tags": ["trading"],
+  "experiments": [
+    {
+      "name": "trading_encoder",
+      "tags": ["encoder"],
+      "grid": {
+        "encoder.name": [
+          "multi-scale-context-v0",
+          "returns-context-v0",
+          "price-context-v0"
+        ]
+      }
+    }
+  ]
+}
