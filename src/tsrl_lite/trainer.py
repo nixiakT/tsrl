@@ -326,6 +326,7 @@ def train_on_price_splits(
         "overall": summarize_numeric_metrics(history, update_metric_keys),
         "tail": summarize_numeric_metrics(history[-5:], update_metric_keys),
     }
+    agent_metadata = agent.metadata() if hasattr(agent, "metadata") else None
     summary = {
         "experiment": config.experiment_name,
         "env": config.env.name,
@@ -352,6 +353,8 @@ def train_on_price_splits(
         "train_end_time": train_end_time,
         "val_end_time": val_end_time,
     }
+    if agent_metadata:
+        summary["agent_metadata"] = agent_metadata
     dump_json(summary_path, summary)
 
     artifacts = TrainingArtifacts(

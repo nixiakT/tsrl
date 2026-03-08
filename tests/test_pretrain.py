@@ -326,6 +326,53 @@ class PatchTSTPretrainingTest(unittest.TestCase):
             for key, value in loaded_backbone_state.items():
                 self.assertTrue(torch.equal(value, agent_backbone_state[key]))
             self.assertTrue(all(not parameter.requires_grad for parameter in agent.network.backbone_parameters()))
+            self.assertTrue(agent.metadata()["pretrained_backbone"]["loaded"])
+            self.assertEqual(agent.metadata()["pretrained_backbone"]["task"], "regime_classification")
+
+    def test_patchtst_agent_rejects_incompatible_pretrained_backbone_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_path = self._write_patchtst_portfolio_config(tmp_path)
+            artifacts, _ = pretrain_patchtst_backbone(
+                config_path=config_path,
+                output_dir=tmp_path / "pretrain_vector",
+                epochs=1,
+                batch_size=16,
+                task_type="future_return_vector_regression",
+            )
+
+            encoder = SequenceWindowEncoder(window_size=16, agent_feature_dim=3, window_feature_dim=3)
+            with self.assertRaisesRegex(ValueError, "incompatible PatchTST backbone checkpoint"):
+                TorchPatchTSTPPOAgent(
+                    encoder=encoder,
+                    action_dim=5,
+                    gamma=0.99,
+                    gae_lambda=0.95,
+                    policy_lr=0.001,
+                    value_lr=0.001,
+                    gradient_clip=1.0,
+                    hidden_size=16,
+                    patch_len=4,
+                    stride=2,
+                    num_layers=1,
+                    num_heads=2,
+                    dropout=0.0,
+                    use_cls_token=True,
+                    channel_independent=False,
+                    clip_epsilon=0.2,
+                    update_epochs=2,
+                    entropy_coef=0.01,
+                    value_coef=0.5,
+                    mini_batch_size=8,
+                    target_kl=0.05,
+                    value_clip_epsilon=0.2,
+                    aux_loss_coef=0.1,
+                    aux_mask_ratio=0.4,
+                    aux_epochs=1,
+                    pretrained_backbone_path=str(artifacts.checkpoint_path),
+                    device="cpu",
+                    seed=73,
+                )
 
 
 if __name__ == "__main__":

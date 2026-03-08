@@ -23,6 +23,7 @@ if TORCH_AVAILABLE:
 
     from tsrl_lite.algorithms.torch_patchtst_ppo import TorchPatchTSTPPOAgent
     from tsrl_lite.networks.torch_patchtst import TorchPatchTSTActorCriticNetwork
+    from tsrl_lite.pretrain import pretrain_patchtst_backbone
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "torch is not installed")
@@ -516,6 +517,109 @@ class TorchPatchTSTSmokeTest(unittest.TestCase):
             self.assertEqual(summary["env"], "portfolio-v0")
             self.assertIn("mean_sharpe_ratio", summary["evaluation"])
             self.assertIn("backbone_trainable", summary["train_update_metrics"]["overall"])
+
+    def test_torch_patchtst_portfolio_finetune_summary_includes_pretrained_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            pretrain_config_path = tmp_path / "torch_patchtst_portfolio_pretrain_config.json"
+            finetune_config_path = tmp_path / "torch_patchtst_portfolio_finetune_config.json"
+            output_dir = tmp_path / "portfolio_finetune_run"
+            config = {
+                "experiment_name": "torch_patchtst_portfolio_finetune_smoke",
+                "seed": 97,
+                "data": {
+                    "source": "synthetic",
+                    "window_size": 24,
+                    "train_ratio": 0.8,
+                    "val_ratio": 0.1,
+                    "synthetic": {
+                        "steps": 1000,
+                        "assets": 3,
+                        "drift": 0.0012,
+                        "volatility": 0.007,
+                        "seasonality": 0.002,
+                        "correlation": 0.35
+                    }
+                },
+                "env": {
+                    "name": "portfolio-v0",
+                    "reward_scale": 1.0,
+                    "episode_horizon": 96,
+                    "random_reset": True,
+                    "params": {
+                        "trading_cost": 0.0005,
+                        "allocation_candidates": [
+                            [0.0, 0.0, 0.0],
+                            [0.3333333333, 0.3333333333, 0.3333333333],
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0]
+                        ]
+                    }
+                },
+                "encoder": {
+                    "name": "sequence-window-v0",
+                    "params": {}
+                },
+                "agent": {
+                    "name": "torch-patchtst-ppo",
+                    "gamma": 0.99,
+                    "gae_lambda": 0.95,
+                    "policy_lr": 0.001,
+                    "value_lr": 0.001,
+                    "gradient_clip": 1.0,
+                    "params": {
+                        "hidden_size": 16,
+                        "patch_len": 4,
+                        "stride": 2,
+                        "num_layers": 1,
+                        "num_heads": 2,
+                        "dropout": 0.0,
+                        "use_cls_token": True,
+                        "channel_independent": True,
+                        "clip_epsilon": 0.2,
+                        "update_epochs": 2,
+                        "entropy_coef": 0.01,
+                        "value_coef": 0.5,
+                        "mini_batch_size": 8,
+                        "target_kl": 0.05,
+                        "value_clip_epsilon": 0.2,
+                        "freeze_backbone": True,
+                        "unfreeze_backbone_after_updates": 1,
+                        "strict_backbone_config": True,
+                        "device": "cpu"
+                    }
+                },
+                "trainer": {
+                    "episodes": 3,
+                    "eval_episodes": 1,
+                    "log_interval": 3,
+                    "checkpoint_dir": str(output_dir)
+                }
+            }
+            pretrain_config_path.write_text(json.dumps(config), encoding="utf-8")
+            artifacts, _ = pretrain_patchtst_backbone(
+                config_path=pretrain_config_path,
+                output_dir=tmp_path / "portfolio_pretrain",
+                epochs=2,
+                batch_size=16,
+                task_type="future_return_vector_regression",
+            )
+
+            config["agent"]["params"]["pretrained_backbone_path"] = str(artifacts.checkpoint_path)
+            finetune_config_path.write_text(json.dumps(config), encoding="utf-8")
+            _, summary = train_experiment(config_path=finetune_config_path, output_dir=output_dir)
+
+            self.assertIn("agent_metadata", summary)
+            self.assertTrue(summary["agent_metadata"]["pretrained_backbone"]["loaded"])
+            self.assertEqual(
+                summary["agent_metadata"]["pretrained_backbone"]["task"],
+                "future_return_vector_regression",
+            )
+            self.assertEqual(
+                summary["agent_metadata"]["pretrained_backbone"]["regression_target_dim"],
+                3,
+            )
 
 
 if __name__ == "__main__":

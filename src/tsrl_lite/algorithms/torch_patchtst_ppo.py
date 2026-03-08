@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from tsrl_lite.algorithms.common import EpisodeBatch
@@ -56,6 +58,7 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             pretrained_backbone_path: str | None = None,
             freeze_backbone: bool = False,
             unfreeze_backbone_after_updates: int | None = None,
+            strict_backbone_config: bool = True,
             device: str = "auto",
             seed: int = 7,
         ) -> None:
@@ -77,12 +80,17 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             self.aux_epochs = max(1, int(aux_epochs))
             self.pretrained_backbone_path = pretrained_backbone_path
             self.freeze_backbone = bool(freeze_backbone)
+            self.strict_backbone_config = bool(strict_backbone_config)
             self.unfreeze_backbone_after_updates = (
                 None
                 if unfreeze_backbone_after_updates is None
                 else max(0, int(unfreeze_backbone_after_updates))
             )
             self.update_count = 0
+            self.pretrained_backbone_metadata: dict[str, object] = {
+                "loaded": False,
+                "path": None,
+            }
             resolved_device = device
             if device == "auto":
                 resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -108,12 +116,35 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
                 use_cls_token=use_cls_token,
                 channel_independent=channel_independent,
             ).to(self.device)
+            self.expected_backbone_config = {
+                "input_dim": input_dim,
+                "sequence_length": sequence_length,
+                "hidden_size": hidden_size,
+                "patch_len": patch_len,
+                "stride": stride,
+                "num_layers": num_layers,
+                "num_heads": num_heads,
+                "dropout": dropout,
+                "use_cls_token": bool(use_cls_token),
+                "channel_independent": bool(channel_independent),
+            }
             if self.pretrained_backbone_path:
                 payload = torch.load(self.pretrained_backbone_path, map_location=self.device)
+                if isinstance(payload, dict):
+                    self._validate_pretrained_backbone_payload(payload)
                 backbone_state_dict = payload.get("backbone_state_dict", payload.get("state_dict", payload))
                 if not isinstance(backbone_state_dict, dict):
                     raise ValueError("pretrained_backbone_path must point to a valid PatchTST backbone checkpoint")
                 self.network.load_backbone_state_dict(backbone_state_dict)
+                self.pretrained_backbone_metadata = {
+                    "loaded": True,
+                    "path": str(Path(self.pretrained_backbone_path)),
+                    "task": payload.get("task") if isinstance(payload, dict) else None,
+                    "task_heads": payload.get("task_heads") if isinstance(payload, dict) else None,
+                    "best_selection_metric": payload.get("best_selection_metric") if isinstance(payload, dict) else None,
+                    "best_selection_value": payload.get("best_selection_value") if isinstance(payload, dict) else None,
+                    "regression_target_dim": payload.get("regression_target_dim") if isinstance(payload, dict) else None,
+                }
             self.backbone_parameters = list(self.network.backbone_parameters())
             self.backbone_frozen = bool(self.freeze_backbone)
             self._set_backbone_trainable(not self.backbone_frozen)
@@ -128,6 +159,21 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             for parameter in self.backbone_parameters:
                 parameter.requires_grad_(trainable)
             self.has_trainable_backbone = bool(trainable)
+
+        def _validate_pretrained_backbone_payload(self, payload: dict[str, object]) -> None:
+            if not self.strict_backbone_config:
+                return
+            backbone_config = payload.get("backbone_config")
+            if not isinstance(backbone_config, dict):
+                return
+            mismatches = []
+            for key, expected_value in self.expected_backbone_config.items():
+                loaded_value = backbone_config.get(key)
+                if loaded_value != expected_value:
+                    mismatches.append(f"{key}={loaded_value!r} (expected {expected_value!r})")
+            if mismatches:
+                mismatch_text = ", ".join(mismatches)
+                raise ValueError(f"incompatible PatchTST backbone checkpoint: {mismatch_text}")
 
         def _maybe_unfreeze_backbone(self) -> bool:
             if not self.backbone_frozen:
@@ -231,3 +277,9 @@ if torch is not None and TorchPatchTSTActorCriticNetwork is not None:
             self.network = network.to(self.device)
             if optimizer_state is not None:
                 self.optimizer.load_state_dict(optimizer_state)
+
+        def metadata(self) -> dict[str, object]:
+            return {
+                "pretrained_backbone": dict(self.pretrained_backbone_metadata),
+                "backbone_config": dict(self.expected_backbone_config),
+            }

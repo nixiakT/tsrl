@@ -156,7 +156,14 @@ Then fine-tune from the saved backbone checkpoint:
 uv run tsrl-train train --config configs/synthetic_regime_patchtst_finetune_template.json
 ```
 
+For multi-asset transfer, there is also a portfolio fine-tune template:
+
+```bash
+uv run tsrl-train train --config configs/synthetic_portfolio_patchtst_finetune_template.json
+```
+
 The fine-tune template now uses a short backbone warmup: it freezes the pretrained PatchTST backbone for the first few PPO updates and then automatically unfreezes it through `agent.params.unfreeze_backbone_after_updates`.
+Backbone loading is also compatibility-checked by default, so mismatched PatchTST shapes or tokenization settings fail fast instead of silently partial-loading.
 
 Train with the optional Transformer + PPO sequence model:
 

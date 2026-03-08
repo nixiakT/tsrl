@@ -1,0 +1,86 @@
+{
+  "experiment_name": "synthetic_portfolio_patchtst_finetune",
+  "seed": 89,
+  "data": {
+    "source": "synthetic",
+    "window_size": 32,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "synthetic": {
+      "steps": 2600,
+      "assets": 3,
+      "drift": 0.0013,
+      "volatility": 0.009,
+      "seasonality": 0.0025,
+      "correlation": 0.45
+    }
+  },
+  "env": {
+    "name": "portfolio-v0",
+    "reward_scale": 1.0,
+    "episode_horizon": 192,
+    "random_reset": true,
+    "params": {
+      "trading_cost": 0.0005,
+      "allocation_candidates": [
+        [0.0, 0.0, 0.0],
+        [0.3333333333, 0.3333333333, 0.3333333333],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.5, 0.5, 0.0],
+        [0.5, 0.0, 0.5],
+        [0.0, 0.5, 0.5]
+      ]
+    }
+  },
+  "encoder": {
+    "name": "sequence-window-v0",
+    "params": {}
+  },
+  "agent": {
+    "name": "torch-patchtst-ppo",
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_lr": 0.0008,
+    "value_lr": 0.0008,
+    "gradient_clip": 1.0,
+    "params": {
+      "hidden_size": 64,
+      "patch_len": 8,
+      "stride": 4,
+      "num_layers": 2,
+      "num_heads": 4,
+      "dropout": 0.1,
+      "use_cls_token": true,
+      "channel_independent": true,
+      "clip_epsilon": 0.2,
+      "update_epochs": 4,
+      "entropy_coef": 0.01,
+      "value_coef": 0.5,
+      "mini_batch_size": 64,
+      "target_kl": 0.05,
+      "value_clip_epsilon": 0.2,
+      "aux_loss_coef": 0.05,
+      "aux_mask_ratio": 0.4,
+      "aux_epochs": 1,
+      "pretrained_backbone_path": "runs/synthetic_portfolio_patchtst_vector_pretrain/backbone_checkpoint.pt",
+      "freeze_backbone": true,
+      "unfreeze_backbone_after_updates": 5,
+      "strict_backbone_config": true,
+      "device": "auto"
+    }
+  },
+  "trainer": {
+    "episodes": 40,
+    "val_episodes": 1,
+    "eval_episodes": 1,
+    "log_interval": 10,
+    "eval_interval": 10,
+    "selection_metric": "mean_sharpe_ratio",
+    "selection_mode": "max",
+    "save_best": true,
+    "early_stop_patience": null,
+    "checkpoint_dir": "runs/synthetic_portfolio_patchtst_finetune"
+  }
+}
