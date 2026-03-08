@@ -99,7 +99,28 @@ class PatchTSTPretrainingTest(unittest.TestCase):
             self.assertTrue(artifacts.summary_path.exists())
             self.assertGreaterEqual(summary["best_val_accuracy"], 0.0)
             self.assertLessEqual(summary["best_val_accuracy"], 1.0)
-            self.assertEqual(summary["task"], "regime_classification_pretraining")
+            self.assertEqual(summary["task"], "regime_classification")
+            self.assertEqual(summary["selection_metric"], "val_accuracy")
+
+    def test_pretrain_patchtst_supports_future_return_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_path = self._write_patchtst_config(tmp_path)
+
+            artifacts, summary = pretrain_patchtst_backbone(
+                config_path=config_path,
+                output_dir=tmp_path / "pretrain_regression",
+                epochs=2,
+                batch_size=16,
+                task_type="future_return_regression",
+            )
+
+            self.assertTrue(artifacts.checkpoint_path.exists())
+            self.assertEqual(summary["task"], "future_return_regression")
+            self.assertEqual(summary["selection_metric"], "val_mae")
+            self.assertGreaterEqual(summary["best_val_mae"], 0.0)
+            self.assertIn("val_rmse", summary["best_metrics"])
+            self.assertIn("val_correlation", summary["best_metrics"])
 
     def test_patchtst_agent_loads_and_freezes_pretrained_backbone(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

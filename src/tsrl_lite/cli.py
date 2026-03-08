@@ -34,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pretrain_parser.add_argument("--config", required=True, help="path to experiment json config")
     pretrain_parser.add_argument("--output", help="optional output directory override")
+    pretrain_parser.add_argument(
+        "--task",
+        choices=["regime_classification", "future_return_regression"],
+        default="regime_classification",
+        help="supervised target used during PatchTST pretraining",
+    )
     pretrain_parser.add_argument("--epochs", type=int, default=10, help="number of supervised pretraining epochs")
     pretrain_parser.add_argument("--batch-size", type=int, default=64, help="pretraining mini-batch size")
     pretrain_parser.add_argument("--learning-rate", type=float, help="optional pretraining learning rate override")
@@ -194,10 +200,12 @@ def handle_pretrain_patchtst(args: argparse.Namespace) -> None:
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        task_type=args.task,
     )
     print(f"backbone_checkpoint: {artifacts.checkpoint_path}")
     print(f"summary: {artifacts.summary_path}")
-    print(f"best_val_accuracy: {summary['best_val_accuracy']:.4f}")
+    print(f"selection_metric: {summary['selection_metric']}")
+    print(f"best_selection_value: {summary['best_selection_value']:.4f}")
 
 
 def handle_benchmark(args: argparse.Namespace) -> None:
