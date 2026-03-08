@@ -15,6 +15,7 @@ from tsrl_lite.export import export_rollouts
 from tsrl_lite.matrix import run_benchmark_matrix_spec
 from tsrl_lite.optimizer import run_overnight_optimizer, run_overnight_watchdog
 from tsrl_lite.pretrain import pretrain_patchtst_backbone
+from tsrl_lite.probe import probe_patchtst_backbone
 from tsrl_lite.registry import list_agents, list_encoders, list_envs
 from tsrl_lite.study import run_study, run_study_spec
 from tsrl_lite.trainer import load_trained_agent, train_experiment
@@ -49,6 +50,28 @@ def build_parser() -> argparse.ArgumentParser:
     pretrain_parser.add_argument("--epochs", type=int, default=10, help="number of supervised pretraining epochs")
     pretrain_parser.add_argument("--batch-size", type=int, default=64, help="pretraining mini-batch size")
     pretrain_parser.add_argument("--learning-rate", type=float, help="optional pretraining learning rate override")
+
+    probe_parser = subparsers.add_parser(
+        "probe-patchtst",
+        help="run a frozen linear probe on top of a pretrained PatchTST backbone",
+    )
+    probe_parser.add_argument("--config", required=True, help="path to experiment json config")
+    probe_parser.add_argument("--checkpoint", required=True, help="path to pretrained PatchTST checkpoint")
+    probe_parser.add_argument("--output", help="optional output directory override")
+    probe_parser.add_argument(
+        "--task",
+        choices=[
+            "regime_classification",
+            "future_return_regression",
+            "future_return_vector_regression",
+            "joint_regime_return",
+        ],
+        default="regime_classification",
+        help="downstream labeled task used to probe the frozen PatchTST features",
+    )
+    probe_parser.add_argument("--epochs", type=int, default=10, help="number of probe epochs")
+    probe_parser.add_argument("--batch-size", type=int, default=64, help="probe mini-batch size")
+    probe_parser.add_argument("--learning-rate", type=float, help="optional probe learning rate override")
 
     benchmark_parser = subparsers.add_parser("benchmark", help="run a multi-seed benchmark")
     benchmark_parser.add_argument("--config", required=True, help="path to experiment json config")
@@ -209,6 +232,22 @@ def handle_pretrain_patchtst(args: argparse.Namespace) -> None:
         task_type=args.task,
     )
     print(f"backbone_checkpoint: {artifacts.checkpoint_path}")
+    print(f"summary: {artifacts.summary_path}")
+    print(f"selection_metric: {summary['selection_metric']}")
+    print(f"best_selection_value: {summary['best_selection_value']:.4f}")
+
+
+def handle_probe_patchtst(args: argparse.Namespace) -> None:
+    artifacts, summary = probe_patchtst_backbone(
+        args.config,
+        checkpoint_path=args.checkpoint,
+        output_dir=args.output,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        task_type=args.task,
+    )
+    print(f"probe_checkpoint: {artifacts.checkpoint_path}")
     print(f"summary: {artifacts.summary_path}")
     print(f"selection_metric: {summary['selection_metric']}")
     print(f"best_selection_value: {summary['best_selection_value']:.4f}")
@@ -455,6 +494,9 @@ def main() -> None:
         return
     if args.command == "pretrain-patchtst":
         handle_pretrain_patchtst(args)
+        return
+    if args.command == "probe-patchtst":
+        handle_probe_patchtst(args)
         return
     if args.command == "benchmark":
         handle_benchmark(args)

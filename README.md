@@ -150,6 +150,26 @@ uv run tsrl-train pretrain-patchtst \
   --output runs/synthetic_portfolio_patchtst_masked_pretrain
 ```
 
+Then evaluate the frozen backbone directly with a linear probe before RL fine-tuning:
+
+```bash
+uv run tsrl-train probe-patchtst \
+  --config configs/synthetic_regime_patchtst_aux.json \
+  --checkpoint runs/synthetic_regime_patchtst_pretrain/backbone_checkpoint.pt \
+  --task regime_classification \
+  --output runs/synthetic_regime_patchtst_probe
+```
+
+Or probe a self-supervised multivariate backbone on future asset-return vectors:
+
+```bash
+uv run tsrl-train probe-patchtst \
+  --config configs/synthetic_portfolio_patchtst.json \
+  --checkpoint runs/synthetic_portfolio_patchtst_masked_pretrain/backbone_checkpoint.pt \
+  --task future_return_vector_regression \
+  --output runs/synthetic_portfolio_patchtst_probe
+```
+
 Then fine-tune from the saved backbone checkpoint:
 
 ```bash
@@ -416,7 +436,7 @@ Exported rollout datasets now also include step-level numeric info traces such a
 
 The optional `torch-gru-ppo`, `torch-dlinear-ppo`, `torch-patchtst-ppo`, and `torch-transformer-ppo` agents now support PPO minibatches, `target_kl` early stopping, and clipped value updates through `agent.params`. Their training summaries also expose `train_update_metrics` so you can inspect signals such as `approx_kl`, `clip_fraction`, `explained_variance`, and `early_stop_triggered` without opening the full history file. The PatchTST agent also supports masked-patch auxiliary learning through `aux_loss_coef`, `aux_mask_ratio`, and `aux_epochs`, and now exposes a `channel_independent` mode for multivariate windows so portfolio-style time series can be tokenized closer to the original PatchTST design.
 
-There is now also a lightweight PatchTST pretraining path. `tsrl-train pretrain-patchtst` can train the backbone with regime classification labels, scalar future-return regression targets, multivariate future-return vectors, a joint multitask objective, or a pure masked-patch self-supervised objective derived from the same time-series windows. It saves `backbone_checkpoint.pt`, and the RL agent can then load it through `agent.params.pretrained_backbone_path`. Fine-tuning can either keep the backbone trainable from the start, freeze it with `freeze_backbone`, or do a more realistic warm start by freezing first and then releasing it later with `unfreeze_backbone_after_updates`. If you need to rebalance the multitask objective, `agent.params.pretrain_classification_loss_coef` and `agent.params.pretrain_regression_loss_coef` control the two supervised heads during pretraining.
+There is now also a lightweight PatchTST pretraining path. `tsrl-train pretrain-patchtst` can train the backbone with regime classification labels, scalar future-return regression targets, multivariate future-return vectors, a joint multitask objective, or a pure masked-patch self-supervised objective derived from the same time-series windows. It saves `backbone_checkpoint.pt`, and the RL agent can then load it through `agent.params.pretrained_backbone_path`. Fine-tuning can either keep the backbone trainable from the start, freeze it with `freeze_backbone`, or do a more realistic warm start by freezing first and then releasing it later with `unfreeze_backbone_after_updates`. If you need to rebalance the multitask objective, `agent.params.pretrain_classification_loss_coef` and `agent.params.pretrain_regression_loss_coef` control the two supervised heads during pretraining. There is also a matching `tsrl-train probe-patchtst` command for frozen linear probes, so you can measure representation quality before spending time on RL fine-tuning.
 
 Those training-stability signals are now also available inside study and matrix specs. For example, `report_metrics` or `selection_metric` can reference names such as `train.approx_kl`, `train.value_loss`, `train_tail.clip_fraction`, or `validation.mean_reward`.
 
